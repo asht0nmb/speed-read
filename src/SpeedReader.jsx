@@ -936,7 +936,7 @@ export default function SpeedReader() {
               letterSpacing: "-0.02em",
             }}
           >
-            <span style={{ color: THEME.accent }}>swift</span>read
+            <span style={{ color: THEME.accent }}>speed</span>read
           </h1>
           <p
             style={{
@@ -1211,7 +1211,7 @@ export default function SpeedReader() {
             </IconButton>
           )}
           <span style={{ fontFamily: FONTS.display, fontSize: 13 }}>
-            <span style={{ color: THEME.accent }}>swift</span>read
+            <span style={{ color: THEME.accent }}>speed</span>read
           </span>
           <span style={{ color: THEME.textDim, fontSize: 12 }}>·</span>
           <span
