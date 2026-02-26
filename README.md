@@ -1,4 +1,4 @@
-# **swift**read
+# **speed**read
 
 Open-source speed reader using RSVP (Rapid Serial Visual Presentation).
 
