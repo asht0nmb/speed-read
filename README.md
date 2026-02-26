@@ -71,4 +71,4 @@ npm run test:run  # single run (CI)
 
 ## License
 
-MIT
+MIT - Use it, modify it, share it
