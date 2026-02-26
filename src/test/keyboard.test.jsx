@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SpeedReader from '../SpeedReader.jsx';
@@ -27,20 +27,22 @@ async function setupReaderWithWords(text = 'one two three four five six seven ei
 }
 
 describe('Keyboard shortcuts', () => {
+  beforeEach(() => localStorage.clear());
+
   it('Space toggles play/pause', async () => {
     await setupReaderWithWords();
-    // Initially paused — shows ▶
-    expect(screen.getByText('▶')).toBeInTheDocument();
+    // Initially paused
+    expect(screen.getByTitle('Play (Space)')).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: ' ' });
-    // Should now be playing — shows ❚❚
+    // Should now be playing
     await waitFor(() => {
-      expect(screen.getByText('❚❚')).toBeInTheDocument();
+      expect(screen.getByTitle('Pause (Space)')).toBeInTheDocument();
     });
 
     fireEvent.keyDown(window, { key: ' ' });
     await waitFor(() => {
-      expect(screen.getByText('▶')).toBeInTheDocument();
+      expect(screen.getByTitle('Play (Space)')).toBeInTheDocument();
     });
   });
 

@@ -2,6 +2,17 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { THEME, FONTS, tokenize, findORP, pauseMultiplier } from "./utils.js";
 import { extractWithPDFJS, parseTOC } from "./pdf.js";
 import {
+  hashFile,
+  hashText,
+  saveBookmark,
+  loadBookmark,
+  clearBookmark,
+  saveSettings,
+  loadSettings,
+  savePins,
+  loadPins,
+} from "./persistence.js";
+import {
   Menu,
   Zap,
   AlignLeft,
@@ -15,6 +26,7 @@ import {
   Pause,
   Eye,
   Upload,
+  Bookmark,
 } from "lucide-react";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -362,6 +374,8 @@ function KeyboardHints({ onClose }) {
     ["T", "Toggle full text"],
     ["P", "Toggle PDF view"],
     ["O", "Toggle ORP highlight"],
+    ["M", "Add pin at position"],
+    ["B", "Jump to bookmark"],
     ["?", "This panel"],
     ["Esc", "Pause / close panels"],
   ];
@@ -456,6 +470,66 @@ function KeyboardHints({ onClose }) {
   );
 }
 
+// ─── Resume Banner ───────────────────────────────────────────────────────────
+
+function ResumeBanner({ wordIndex, totalWords, isFresh, onResume, onDismiss }) {
+  const pct = Math.round((wordIndex / totalWords) * 100);
+  return (
+    <div
+      style={{
+        background: THEME.accentDim,
+        borderBottom: `1px solid ${THEME.accent}44`,
+        padding: "8px 16px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexShrink: 0,
+        fontFamily: FONTS.body,
+        fontSize: 13,
+      }}
+    >
+      <span style={{ color: THEME.textDim }}>
+        {isFresh
+          ? `Resume from ${pct}% (word ${wordIndex.toLocaleString()})`
+          : `Bookmark at ${pct}% — word count changed, position may be approximate`}
+      </span>
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <button
+          onClick={onResume}
+          style={{
+            background: THEME.accent,
+            border: "none",
+            borderRadius: 6,
+            color: "#fff",
+            padding: "4px 12px",
+            fontFamily: FONTS.body,
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          Resume
+        </button>
+        <button
+          onClick={onDismiss}
+          style={{
+            background: "transparent",
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 6,
+            color: THEME.textDim,
+            padding: "4px 12px",
+            fontFamily: FONTS.body,
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          Start over
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SpeedReader() {
@@ -467,18 +541,19 @@ export default function SpeedReader() {
 
   // Playback
   const [isPlaying, setIsPlaying] = useState(false);
-  const [wpm, setWpm] = useState(300);
-  const [chunkSize, setChunkSize] = useState(1);
+  const [wpm, setWpm] = useState(() => loadSettings().wpm);
+  const [chunkSize, setChunkSize] = useState(() => loadSettings().chunkSize);
 
   // PDF
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageBreaks, setPageBreaks] = useState([]);
   const [tocEntries, setTocEntries] = useState([]);
   const [spacingThreshold, setSpacingThreshold] = useState(1.2);
+  const [marginPercent, setMarginPercent] = useState(() => loadSettings().marginPercent);
 
   // UI state
   const [viewMode, setViewMode] = useState("rsvp"); // 'rsvp' | 'text' | 'pdf'
-  const [showORP, setShowORP] = useState(true);
+  const [showORP, setShowORP] = useState(() => loadSettings().showORP);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadTab, setUploadTab] = useState("file"); // 'file' | 'paste'
@@ -486,9 +561,17 @@ export default function SpeedReader() {
   const [showTOC, setShowTOC] = useState(false);
   const [showKeyboardHints, setShowKeyboardHints] = useState(false);
 
+  // Persistence
+  const [contentHash, setContentHash] = useState(null);
+  const [pendingResume, setPendingResume] = useState(null);
+
+  // Named pins (user bookmarks)
+  const [pins, setPins] = useState([]);
+
   const timeoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const currentFileRef = useRef(null);
+  const saveTimerRef = useRef(null);
 
   // ── Playback engine (recursive setTimeout for smart pauses) ──────────────
 
@@ -532,7 +615,48 @@ export default function SpeedReader() {
   const restart = useCallback(() => {
     setIsPlaying(false);
     setCurrentIndex(0);
-  }, []);
+    if (contentHash) clearBookmark(contentHash);
+    setPendingResume(null);
+  }, [contentHash]);
+
+  // ── Auto-save bookmark (debounced) ─────────────────────────────────────────
+
+  useEffect(() => {
+    if (!contentHash || words.length === 0 || currentIndex === 0) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveBookmark(contentHash, fileName, currentIndex, words.length);
+    }, 1500);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [contentHash, currentIndex, words.length, fileName]);
+
+  // ── Auto-save settings ─────────────────────────────────────────────────────
+
+  useEffect(() => {
+    saveSettings({ wpm, chunkSize, showORP, marginPercent });
+  }, [wpm, chunkSize, showORP, marginPercent]);
+
+  // ── Named pins ──────────────────────────────────────────────────────────
+
+  const addPin = useCallback(() => {
+    const context = words.slice(Math.max(0, currentIndex - 5), currentIndex + 6).join(" ");
+    const newPin = { wordIndex: currentIndex, context, createdAt: Date.now() };
+    const updated = [...pins, newPin].sort((a, b) => a.wordIndex - b.wordIndex);
+    const deduped = updated.filter(
+      (p, i) => i === 0 || Math.abs(p.wordIndex - updated[i - 1].wordIndex) > 5
+    );
+    setPins(deduped);
+    if (contentHash) savePins(contentHash, deduped);
+  }, [words, currentIndex, pins, contentHash]);
+
+  const removePin = useCallback(
+    (wordIndex) => {
+      const updated = pins.filter((p) => p.wordIndex !== wordIndex);
+      setPins(updated);
+      if (contentHash) savePins(contentHash, updated);
+    },
+    [pins, contentHash]
+  );
 
   // ── File processing ───────────────────────────────────────────────────────
 
@@ -546,52 +670,77 @@ export default function SpeedReader() {
       setPdfDoc(null);
       setPageBreaks([]);
       setTocEntries([]);
+      setPendingResume(null);
+      setPins([]);
       currentFileRef.current = null;
+
+      // Compute content hash for bookmarking (fast — samples only 16KB)
+      const hash = await hashFile(file);
+      setContentHash(hash);
 
       const isPDF = file.type === "application/pdf" || file.name.endsWith(".pdf");
 
+      let tokenizedWords = [];
       if (isPDF) {
         try {
           currentFileRef.current = file;
           const { text, pageBreaks: pb, pdfDoc: doc } = await extractWithPDFJS(
             file,
-            spacingThreshold
+            spacingThreshold,
+            marginPercent
           );
           if (!text || text.trim().length < 20) throw new Error("Empty extraction");
+          tokenizedWords = tokenize(text);
           setRawText(text);
-          setWords(tokenize(text));
+          setWords(tokenizedWords);
           setPageBreaks(pb);
           setPdfDoc(doc);
-          // Build TOC asynchronously
           parseTOC(doc, pb).then(setTocEntries).catch(() => {});
         } catch (err) {
           console.error("PDF extraction failed:", err);
           setUploadError(
             "Could not extract text from this PDF. Try a different file or switch to Paste mode."
           );
+          return;
         }
       } else {
         try {
           const text = await file.text();
           if (!text || text.trim().length === 0) throw new Error("Empty");
+          tokenizedWords = tokenize(text);
           setRawText(text);
-          setWords(tokenize(text));
+          setWords(tokenizedWords);
         } catch {
           setUploadError("Could not read this file. Try a plain text or PDF file.");
+          return;
         }
       }
+
+      // Check for existing bookmark
+      const bookmark = loadBookmark(hash);
+      if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
+        const drift = Math.abs(bookmark.wordCount - tokenizedWords.length) / bookmark.wordCount;
+        setPendingResume({
+          wordIndex: bookmark.wordIndex,
+          isFresh: drift <= 0.05,
+        });
+      }
+
+      // Load named pins
+      setPins(loadPins(hash));
     },
-    [spacingThreshold]
+    [spacingThreshold, marginPercent]
   );
 
-  // Re-extract when spacing threshold changes
+  // Re-extract when spacing threshold or margin changes
   const reExtract = useCallback(
-    async (threshold) => {
+    async (threshold, margin) => {
       if (!currentFileRef.current) return;
       try {
         const { text, pageBreaks: pb, pdfDoc: doc } = await extractWithPDFJS(
           currentFileRef.current,
-          threshold
+          threshold,
+          margin
         );
         setRawText(text);
         setWords(tokenize(text));
@@ -632,13 +781,33 @@ export default function SpeedReader() {
     setIsPlaying(false);
     setCurrentIndex(0);
     setFileName("Pasted text");
-    setRawText(pasteText);
-    setWords(tokenize(pasteText));
     setPdfDoc(null);
     setPageBreaks([]);
     setTocEntries([]);
     setViewMode("rsvp");
     setUploadError("");
+    setPendingResume(null);
+    setPins([]);
+
+    const hash = "paste:" + hashText(pasteText);
+    setContentHash(hash);
+
+    const tokenizedWords = tokenize(pasteText);
+    setRawText(pasteText);
+    setWords(tokenizedWords);
+
+    // Check for existing bookmark
+    const bookmark = loadBookmark(hash);
+    if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
+      const drift = Math.abs(bookmark.wordCount - tokenizedWords.length) / bookmark.wordCount;
+      setPendingResume({
+        wordIndex: bookmark.wordIndex,
+        isFresh: drift <= 0.05,
+      });
+    }
+
+    // Load named pins
+    setPins(loadPins(hash));
   }, [pasteText]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
@@ -686,10 +855,22 @@ export default function SpeedReader() {
         case "?":
           setShowKeyboardHints((v) => !v);
           break;
+        case "b":
+        case "B":
+          if (pendingResume) {
+            setCurrentIndex(pendingResume.wordIndex);
+            setPendingResume(null);
+          }
+          break;
+        case "m":
+        case "M":
+          if (words.length > 0) addPin();
+          break;
         case "Escape":
           setIsPlaying(false);
           setShowTOC(false);
           setShowKeyboardHints(false);
+          setPendingResume(null);
           break;
         default:
           break;
@@ -697,7 +878,7 @@ export default function SpeedReader() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [words.length, togglePlay, restart, pdfDoc]);
+  }, [words.length, togglePlay, restart, pdfDoc, pendingResume, addPin]);
 
   // ── Derived values ────────────────────────────────────────────────────────
 
@@ -978,6 +1159,23 @@ export default function SpeedReader() {
         />
       </div>
 
+      {/* Resume banner */}
+      {pendingResume && (
+        <ResumeBanner
+          wordIndex={pendingResume.wordIndex}
+          totalWords={words.length}
+          isFresh={pendingResume.isFresh}
+          onResume={() => {
+            setCurrentIndex(pendingResume.wordIndex);
+            setPendingResume(null);
+          }}
+          onDismiss={() => {
+            setPendingResume(null);
+            if (contentHash) clearBookmark(contentHash);
+          }}
+        />
+      )}
+
       {/* Top bar */}
       <div
         style={{
@@ -990,7 +1188,7 @@ export default function SpeedReader() {
           gap: 12,
         }}
       >
-        {/* Left: logo + file name */}
+        {/* Left: TOC + logo + file name */}
         <div
           style={{
             display: "flex",
@@ -1001,11 +1199,15 @@ export default function SpeedReader() {
         >
           {tocEntries.length > 0 && (
             <IconButton
-              onClick={() => setShowTOC(true)}
+              onClick={() => {
+                setIsPlaying(false);
+                setShowTOC(true);
+              }}
               active={showTOC}
               title="Table of contents"
+              size={30}
             >
-              <Menu size={16} />
+              <Menu size={14} />
             </IconButton>
           )}
           <span style={{ fontFamily: FONTS.display, fontSize: 13 }}>
@@ -1076,6 +1278,9 @@ export default function SpeedReader() {
               setPdfDoc(null);
               setPageBreaks([]);
               setTocEntries([]);
+              setContentHash(null);
+              setPendingResume(null);
+              setPins([]);
               currentFileRef.current = null;
             }}
             title="New file"
@@ -1087,53 +1292,175 @@ export default function SpeedReader() {
 
       {/* Main content area */}
       {viewMode === "text" ? (
-        <div
-          style={{
-            flex: 1,
-            overflow: "auto",
-            padding: "40px 20px",
-            maxWidth: 680,
-            margin: "0 auto",
-            width: "100%",
-          }}
-        >
-          <p
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+          {/* Text content */}
+          <div
             style={{
-              lineHeight: 1.8,
-              fontSize: 15,
-              color: THEME.textDim,
-              fontWeight: 300,
-              whiteSpace: "pre-wrap",
-              margin: 0,
+              flex: 1,
+              overflow: "auto",
+              padding: "40px 20px",
+              maxWidth: 680,
+              margin: "0 auto",
+              width: "100%",
             }}
           >
-            {words.map((w, i) => (
-              <span
-                key={i}
-                onClick={() => {
-                  setCurrentIndex(i);
-                  setViewMode("rsvp");
-                }}
+            <p
+              style={{
+                lineHeight: 1.8,
+                fontSize: 15,
+                color: THEME.textDim,
+                fontWeight: 300,
+                whiteSpace: "pre-wrap",
+                margin: 0,
+              }}
+            >
+              {words.map((w, i) => {
+                const pin = pins.find((p) => p.wordIndex === i);
+                return (
+                  <span
+                    key={i}
+                    style={{ position: "relative" }}
+                  >
+                    {pin && (
+                      <span
+                        data-testid={`pin-indicator-${i}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCurrentIndex(pin.wordIndex);
+                        }}
+                        style={{
+                          position: "absolute",
+                          left: -16,
+                          top: "0.15em",
+                          color: THEME.accent,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Bookmark size={10} />
+                      </span>
+                    )}
+                    <span
+                      onClick={() => {
+                        setCurrentIndex(i);
+                        setViewMode("rsvp");
+                      }}
+                      style={{
+                        cursor: "pointer",
+                        color:
+                          i === currentIndex
+                            ? THEME.accent
+                            : i < currentIndex
+                            ? THEME.textDim + "66"
+                            : THEME.textDim,
+                        fontWeight: i === currentIndex ? 500 : 300,
+                        transition: "color 0.15s",
+                        borderBottom:
+                          i === currentIndex
+                            ? `1px solid ${THEME.accent}`
+                            : "none",
+                      }}
+                    >
+                      {w}{" "}
+                    </span>
+                  </span>
+                );
+              })}
+            </p>
+          </div>
+
+          {/* Pins sidebar */}
+          {pins.length > 0 && (
+            <div
+              style={{
+                width: 220,
+                borderLeft: `1px solid ${THEME.border}`,
+                overflowY: "auto",
+                padding: "16px 12px",
+                flexShrink: 0,
+              }}
+            >
+              <div
                 style={{
-                  cursor: "pointer",
-                  color:
-                    i === currentIndex
-                      ? THEME.accent
-                      : i < currentIndex
-                      ? THEME.textDim + "66"
-                      : THEME.textDim,
-                  fontWeight: i === currentIndex ? 500 : 300,
-                  transition: "color 0.15s",
-                  borderBottom:
-                    i === currentIndex
-                      ? `1px solid ${THEME.accent}`
-                      : "none",
+                  fontFamily: FONTS.body,
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: THEME.textDim,
+                  marginBottom: 12,
                 }}
               >
-                {w}{" "}
-              </span>
-            ))}
-          </p>
+                Pins
+              </div>
+              {pins.map((pin) => (
+                <div
+                  key={pin.wordIndex}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 6,
+                    marginBottom: 10,
+                    padding: "6px 8px",
+                    borderRadius: 6,
+                    background:
+                      pin.wordIndex === currentIndex
+                        ? THEME.accentDim
+                        : "transparent",
+                    cursor: "pointer",
+                    transition: "background 0.15s",
+                  }}
+                  onClick={() => setCurrentIndex(pin.wordIndex)}
+                >
+                  <Bookmark
+                    size={12}
+                    style={{
+                      color: THEME.accent,
+                      flexShrink: 0,
+                      marginTop: 2,
+                    }}
+                  />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: THEME.textDim,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pin.context}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: THEME.textDim + "88",
+                        marginTop: 2,
+                      }}
+                    >
+                      word {pin.wordIndex + 1}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removePin(pin.wordIndex);
+                    }}
+                    title="Remove pin"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: THEME.textDim,
+                      cursor: "pointer",
+                      padding: 2,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : viewMode === "pdf" && pdfDoc ? (
         <PDFPages
@@ -1230,8 +1557,11 @@ export default function SpeedReader() {
               gap: 10,
             }}
           >
-            <IconButton onClick={restart} title="Restart (R)">
-              <RotateCcw size={16} />
+            <IconButton
+              onClick={addPin}
+              title="Add pin (M)"
+            >
+              <Bookmark size={16} />
             </IconButton>
             <IconButton
               onClick={() =>
@@ -1244,6 +1574,7 @@ export default function SpeedReader() {
 
             <button
               onClick={togglePlay}
+              title={isPlaying ? "Pause (Space)" : "Play (Space)"}
               style={{
                 width: 52,
                 height: 52,
@@ -1332,18 +1663,32 @@ export default function SpeedReader() {
               displayValue={`${chunkSize}w`}
             />
             {currentFileRef.current && (
-              <Slider
-                label="Spacing"
-                value={spacingThreshold}
-                onChange={(v) => {
-                  setSpacingThreshold(v);
-                  reExtract(v);
-                }}
-                min={0.3}
-                max={3.0}
-                step={0.1}
-                displayValue={spacingThreshold.toFixed(1)}
-              />
+              <>
+                <Slider
+                  label="Spacing"
+                  value={spacingThreshold}
+                  onChange={(v) => {
+                    setSpacingThreshold(v);
+                    reExtract(v, marginPercent);
+                  }}
+                  min={0.3}
+                  max={3.0}
+                  step={0.1}
+                  displayValue={spacingThreshold.toFixed(1)}
+                />
+                <Slider
+                  label="Margins"
+                  value={marginPercent}
+                  onChange={(v) => {
+                    setMarginPercent(v);
+                    reExtract(spacingThreshold, v);
+                  }}
+                  min={0}
+                  max={0.25}
+                  step={0.01}
+                  displayValue={`${Math.round(marginPercent * 100)}%`}
+                />
+              </>
             )}
           </div>
         </div>

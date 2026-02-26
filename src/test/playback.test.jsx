@@ -15,6 +15,7 @@ vi.mock('../pdf.js', () => ({
 
 describe('Playback', () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -43,7 +44,7 @@ describe('Playback', () => {
     expect(screen.getByText(/1 \/ 5/)).toBeInTheDocument();
 
     // Start playing
-    await user.click(screen.getByText('▶'));
+    await user.click(screen.getByTitle('Play (Space)'));
 
     // Advance by 200ms — should move to next word
     act(() => {
@@ -70,7 +71,7 @@ describe('Playback', () => {
     });
 
     // Start playing at WPM=300 → base=200ms, "end." delay=200*2.8=560ms
-    await user.click(screen.getByText('▶'));
+    await user.click(screen.getByTitle('Play (Space)'));
 
     // After 200ms, should still be on word 1 (because "end." has 2.8x delay)
     act(() => {
@@ -101,16 +102,16 @@ describe('Playback', () => {
       expect(screen.getByText(/\/ 3/)).toBeInTheDocument();
     });
 
-    await user.click(screen.getByText('▶'));
+    await user.click(screen.getByTitle('Play (Space)'));
 
     // Advance enough for all words (3 words × 200ms = 600ms, plus buffer)
     act(() => {
       vi.advanceTimersByTime(1000);
     });
 
-    // Should be at the end and paused (▶ shown again)
+    // Should be at the end and paused
     await waitFor(() => {
-      expect(screen.getByText('▶')).toBeInTheDocument();
+      expect(screen.getByTitle('Play (Space)')).toBeInTheDocument();
     });
   });
 });

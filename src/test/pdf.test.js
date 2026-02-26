@@ -1,5 +1,110 @@
 import { describe, it, expect, vi } from 'vitest';
-import { groupIntoLines, detectHeadings, flattenOutline } from '../pdf.js';
+import { groupIntoLines, detectHeadings, flattenOutline, extractWithPDFJS } from '../pdf.js';
+import { getDocument } from 'pdfjs-dist';
+
+// ─── extractWithPDFJS margin filtering ──────────────────────────────────────
+
+// Mock pdfjs-dist for extractWithPDFJS tests
+vi.mock('pdfjs-dist', () => ({
+  GlobalWorkerOptions: { workerSrc: '' },
+  getDocument: vi.fn(),
+}));
+
+describe('extractWithPDFJS margin filtering', () => {
+
+  function makeMockPdfDoc(pages) {
+    // pages: array of { items, height }
+    return {
+      numPages: pages.length,
+      getPage: vi.fn(async (pageNum) => ({
+        getTextContent: vi.fn(async () => ({
+          items: pages[pageNum - 1].items,
+        })),
+        getViewport: vi.fn(({ scale }) => ({
+          height: pages[pageNum - 1].height * scale,
+        })),
+      })),
+    };
+  }
+
+  function makeFile(content = 'dummy') {
+    return new File([content], 'test.pdf', { type: 'application/pdf' });
+  }
+
+  function setupMock(pages) {
+    const doc = makeMockPdfDoc(pages);
+    getDocument.mockReturnValue({ promise: Promise.resolve(doc) });
+    return doc;
+  }
+
+  it('includes all items when marginPercent is 0', async () => {
+    setupMock([{
+      height: 1000,
+      items: [
+        { str: 'header', transform: [1, 0, 0, 1, 50, 960], width: 40, hasEOL: true },
+        { str: 'body', transform: [1, 0, 0, 1, 50, 500], width: 30, hasEOL: true },
+        { str: 'footer', transform: [1, 0, 0, 1, 50, 30], width: 40, hasEOL: true },
+      ],
+    }]);
+
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0);
+    expect(text).toContain('header');
+    expect(text).toContain('body');
+    expect(text).toContain('footer');
+  });
+
+  it('excludes header and footer items at default marginPercent', async () => {
+    setupMock([{
+      height: 1000,
+      items: [
+        { str: 'header', transform: [1, 0, 0, 1, 50, 950], width: 40, hasEOL: true },
+        { str: 'body', transform: [1, 0, 0, 1, 50, 500], width: 30, hasEOL: true },
+        { str: 'footer', transform: [1, 0, 0, 1, 50, 50], width: 40, hasEOL: true },
+      ],
+    }]);
+
+    // 8% of 1000 = 80. footer y=50 < 80, header y=950 > 920
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08);
+    expect(text).not.toContain('header');
+    expect(text).toContain('body');
+    expect(text).not.toContain('footer');
+  });
+
+  it('keeps items exactly at margin boundary', async () => {
+    setupMock([{
+      height: 1000,
+      items: [
+        // y=80 is NOT < 80, so it should be included (bottom boundary)
+        { str: 'atbottom', transform: [1, 0, 0, 1, 50, 80], width: 50, hasEOL: true },
+        // y=920 is NOT > 920, so it should be included (top boundary)
+        { str: 'attop', transform: [1, 0, 0, 1, 50, 920], width: 40, hasEOL: true },
+        { str: 'middle', transform: [1, 0, 0, 1, 50, 500], width: 40, hasEOL: true },
+      ],
+    }]);
+
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08);
+    expect(text).toContain('atbottom');
+    expect(text).toContain('attop');
+    expect(text).toContain('middle');
+  });
+
+  it('filters more aggressively with higher marginPercent', async () => {
+    setupMock([{
+      height: 1000,
+      items: [
+        { str: 'nearTop', transform: [1, 0, 0, 1, 50, 800], width: 40, hasEOL: true },
+        { str: 'center', transform: [1, 0, 0, 1, 50, 500], width: 40, hasEOL: true },
+        { str: 'nearBottom', transform: [1, 0, 0, 1, 50, 200], width: 50, hasEOL: true },
+      ],
+    }]);
+
+    // 25% of 1000 = 250. nearBottom y=200 < 250, nearTop y=800 > 750
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.25);
+    expect(text).not.toContain('nearTop');
+    expect(text).toContain('center');
+    expect(text).not.toContain('nearBottom');
+  });
+});
 
 // ─── groupIntoLines ──────────────────────────────────────────────────────────
 
