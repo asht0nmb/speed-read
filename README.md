@@ -1,6 +1,7 @@
 # **speed**read
 
 Open-source speed reader using RSVP (Rapid Serial Visual Presentation).
+Check it out [here](https://speed-read-eight.vercel.app/)!
 
 ---
 
@@ -13,6 +14,8 @@ Open-source speed reader using RSVP (Rapid Serial Visual Presentation).
 - **PDF visual view** — renders actual PDF pages to canvas; click a page to seek the reader to that position
 - **Three view modes** — RSVP · Text · PDF
 - **Paste tab** — paste text directly without a file
+- **Bookmarks** - add bookmarks as you read
+- **Persistence** - reading position saved across sessions for every distinct file
 - **Drag-and-drop or browse** — accepts PDF, TXT, MD, and HTML files
 
 ---
