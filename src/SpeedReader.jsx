@@ -27,6 +27,8 @@ import {
   Eye,
   Upload,
   Bookmark,
+  Linkedin,
+  Github
 } from "lucide-react";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -908,6 +910,7 @@ export default function SpeedReader() {
     return (
       <div
         style={{
+          position: "relative",
           minHeight: "100vh",
           background: THEME.bg,
           display: "flex",
@@ -938,7 +941,7 @@ export default function SpeedReader() {
           >
             <span style={{ color: THEME.accent }}>speed</span>read
           </h1>
-          <p
+          {/* <p
             style={{
               color: THEME.textDim,
               fontSize: 14,
@@ -947,6 +950,35 @@ export default function SpeedReader() {
             }}
           >
             open-source speed reader
+          </p> */}
+
+          {/* INTERACTIVE SUBTITLE */}
+          <p
+            style={{
+              color: THEME.textDim,
+              fontSize: 14,
+              marginBottom: 36,
+              fontWeight: 300,
+              textAlign: "center",
+            }}
+          >
+            <a
+              href="https://github.com/asht0nmb/speed-read"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: THEME.textDim,
+                textDecoration: "underline",
+                textUnderlineOffset: 3, // Pushes the underline down slightly for a cleaner look
+                transition: "color 0.15s",
+                cursor: "pointer",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.color = THEME.accent)}
+              onMouseOut={(e) => (e.currentTarget.style.color = THEME.textDim)}
+            >
+              open-source
+            </a>{" "}
+            speed reader
           </p>
 
           {/* Error banner */}
@@ -1112,6 +1144,58 @@ export default function SpeedReader() {
               </button>
             </div>
           )}
+        </div>
+        
+        <div
+          style={{
+            position: "absolute",
+            bottom: 24,
+            right: 24,
+            display: "flex",
+            gap: 1,
+            fontFamily: FONTS.body,
+            fontSize: 12,
+            color: THEME.textDim,
+          }}
+        >
+          {/* LinkedIn */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span>created by</span>
+            <a
+              href="https://www.linkedin.com/in/ashton-meyer-bibbins/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: THEME.textDim,
+                display: "flex",
+                transition: "color 0.15s",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.color = THEME.accent)}
+              onMouseOut={(e) => (e.currentTarget.style.color = THEME.textDim)}
+            >
+              ashton
+              {/*<Linkedin size={16} />*/} {/* linkedin logo */}
+            </a>
+          </div>
+
+          {/* GitHub */}
+          {/* <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span></span>
+            <a
+              href="https://github.com/asht0nmb/speed-read"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: THEME.textDim,
+                display: "flex",
+                transition: "color 0.15s",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.color = THEME.accent)}
+              onMouseOut={(e) => (e.currentTarget.style.color = THEME.textDim)}
+            >
+              <Github size={16} />
+            </a>
+          </div> */}
         </div>
       </div>
     );
