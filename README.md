@@ -1,8 +1,8 @@
 # **speed**read
 
-Open-source speed reader using RSVP (Rapid Serial Visual Presentation).
+Open-source speed reader using RSVP (Rapid Serial Visual Presentation). Let's you read pdf files (think books, research papers, etc) really quickly. Saves a lot of time, and is free now!
 
-Check it out [here](https://speed-read-eight.vercel.app/)!
+Check it out [here](https://speed-read-eight.vercel.app/)
 
 ---
 
