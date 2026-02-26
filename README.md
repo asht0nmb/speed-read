@@ -1,6 +1,7 @@
 # **speed**read
 
 Open-source speed reader using RSVP (Rapid Serial Visual Presentation).
+
 Check it out [here](https://speed-read-eight.vercel.app/)!
 
 ---
