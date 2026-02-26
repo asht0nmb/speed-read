@@ -107,7 +107,7 @@ export function WordDisplay({ word, showORP, upcomingText }) {
   );
 }
 
-function Slider({ value, onChange, min, max, step, label, displayValue }) {
+function Slider({ value, onChange, min, max, step, label, displayValue, onLabelClick }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 130 }}>
       <div
@@ -121,7 +121,16 @@ function Slider({ value, onChange, min, max, step, label, displayValue }) {
           letterSpacing: "0.1em",
         }}
       >
-        <span>{label}</span>
+        <span
+          onClick={onLabelClick}
+          style={{
+            cursor: onLabelClick ? "pointer" : "default",
+            textDecoration: onLabelClick ? "underline" : "none",
+            textUnderlineOffset: 3,
+          }}
+        >
+          {label}
+        </span>
         <span style={{ color: THEME.accent, fontFamily: FONTS.display }}>
           {displayValue}
         </span>
@@ -472,6 +481,153 @@ function KeyboardHints({ onClose }) {
   );
 }
 
+// ─── Margin Preview Modal ─────────────────────────────────────────────────────
+
+function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function render() {
+      try {
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) return;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({
+          canvasContext: canvas.getContext("2d"),
+          viewport,
+        }).promise;
+      } catch (_) {}
+    }
+    render();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, pageNum]);
+
+  const zonePct = `${marginPercent * 100}%`;
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.5)",
+          zIndex: 40,
+        }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%,-50%)",
+          background: THEME.surface,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 12,
+          padding: "24px 32px",
+          zIndex: 50,
+          maxWidth: 600,
+          width: "90vw",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: FONTS.body,
+              fontSize: 12,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: THEME.textDim,
+            }}
+          >
+            Adjust Margins
+          </span>
+          <span
+            style={{
+              fontFamily: FONTS.body,
+              fontSize: 11,
+              color: THEME.textDim,
+            }}
+          >
+            Page {pageNum}
+          </span>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              color: THEME.textDim,
+              cursor: "pointer",
+              fontSize: 18,
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div
+          style={{
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            style={{ width: "100%", display: "block" }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: zonePct,
+              background: "rgba(220,50,50,0.15)",
+              borderBottom: `2px dashed ${THEME.accent}`,
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: zonePct,
+              background: "rgba(220,50,50,0.15)",
+              borderTop: `2px dashed ${THEME.accent}`,
+              pointerEvents: "none",
+            }}
+          />
+        </div>
+        <Slider
+          label="Margins"
+          value={marginPercent}
+          onChange={onMarginChange}
+          min={0}
+          max={0.25}
+          step={0.01}
+          displayValue={`${Math.round(marginPercent * 100)}%`}
+        />
+      </div>
+    </>
+  );
+}
+
 // ─── Resume Banner ───────────────────────────────────────────────────────────
 
 function ResumeBanner({ wordIndex, totalWords, isFresh, onResume, onDismiss }) {
@@ -562,6 +718,7 @@ export default function SpeedReader() {
   const [pasteText, setPasteText] = useState("");
   const [showTOC, setShowTOC] = useState(false);
   const [showKeyboardHints, setShowKeyboardHints] = useState(false);
+  const [showMarginPreview, setShowMarginPreview] = useState(false);
 
   // Persistence
   const [contentHash, setContentHash] = useState(null);
@@ -872,6 +1029,7 @@ export default function SpeedReader() {
           setIsPlaying(false);
           setShowTOC(false);
           setShowKeyboardHints(false);
+          setShowMarginPreview(false);
           setPendingResume(null);
           break;
         default:
@@ -1230,6 +1388,18 @@ export default function SpeedReader() {
       {showKeyboardHints && (
         <KeyboardHints onClose={() => setShowKeyboardHints(false)} />
       )}
+      {showMarginPreview && pdfDoc && (
+        <MarginPreview
+          pdfDoc={pdfDoc}
+          pageNum={currentPageNum}
+          marginPercent={marginPercent}
+          onMarginChange={(v) => {
+            setMarginPercent(v);
+            reExtract(spacingThreshold, v);
+          }}
+          onClose={() => setShowMarginPreview(false)}
+        />
+      )}
 
       {/* Progress bar */}
       <div style={{ height: 2, background: THEME.border, flexShrink: 0 }}>
@@ -1404,6 +1574,7 @@ export default function SpeedReader() {
                   <span
                     key={i}
                     style={{ position: "relative" }}
+                    {...(pin ? { "data-word-index": i } : {})}
                   >
                     {pin && (
                       <span
@@ -1492,7 +1663,17 @@ export default function SpeedReader() {
                     cursor: "pointer",
                     transition: "background 0.15s",
                   }}
-                  onClick={() => setCurrentIndex(pin.wordIndex)}
+                  onClick={() => {
+                    const el = document.querySelector(
+                      `[data-word-index="${pin.wordIndex}"]`
+                    );
+                    if (el) {
+                      el.scrollIntoView({
+                        behavior: "smooth",
+                        block: "center",
+                      });
+                    }
+                  }}
                 >
                   <Bookmark
                     size={12}
@@ -1644,6 +1825,7 @@ export default function SpeedReader() {
             <IconButton
               onClick={addPin}
               title="Add pin (M)"
+              active={pins.some((p) => p.wordIndex === currentIndex)}
             >
               <Bookmark size={16} />
             </IconButton>
@@ -1771,6 +1953,7 @@ export default function SpeedReader() {
                   max={0.25}
                   step={0.01}
                   displayValue={`${Math.round(marginPercent * 100)}%`}
+                  onLabelClick={() => setShowMarginPreview(true)}
                 />
               </>
             )}

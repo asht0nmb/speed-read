@@ -253,6 +253,92 @@ describe('SpeedReader', () => {
         );
       });
     });
+
+    it('clicking Margins label opens the preview modal', async () => {
+      const { extractWithPDFJS, parseTOC } = await import('../pdf.js');
+      extractWithPDFJS.mockResolvedValue({
+        text: 'word one two three four five six seven eight nine ten',
+        pageBreaks: [{ pageNum: 1, wordIndex: 0 }],
+        pdfDoc: { getPage: vi.fn() },
+      });
+      parseTOC.mockResolvedValue([]);
+
+      render(<SpeedReader />);
+
+      const input = document.querySelector('input[type="file"]');
+      const file = new File(['fake'], 'test.pdf', { type: 'application/pdf' });
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText('Margins')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Margins'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Adjust Margins')).toBeInTheDocument();
+      });
+    });
+
+    it('preview modal shows a canvas element', async () => {
+      const { extractWithPDFJS, parseTOC } = await import('../pdf.js');
+      extractWithPDFJS.mockResolvedValue({
+        text: 'word one two three four five six seven eight nine ten',
+        pageBreaks: [{ pageNum: 1, wordIndex: 0 }],
+        pdfDoc: { getPage: vi.fn() },
+      });
+      parseTOC.mockResolvedValue([]);
+
+      render(<SpeedReader />);
+
+      const input = document.querySelector('input[type="file"]');
+      const file = new File(['fake'], 'test.pdf', { type: 'application/pdf' });
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText('Margins')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Margins'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Adjust Margins')).toBeInTheDocument();
+      });
+
+      expect(document.querySelector('canvas')).toBeInTheDocument();
+    });
+
+    it('Escape closes the preview modal', async () => {
+      const { extractWithPDFJS, parseTOC } = await import('../pdf.js');
+      extractWithPDFJS.mockResolvedValue({
+        text: 'word one two three four five six seven eight nine ten',
+        pageBreaks: [{ pageNum: 1, wordIndex: 0 }],
+        pdfDoc: { getPage: vi.fn() },
+      });
+      parseTOC.mockResolvedValue([]);
+
+      render(<SpeedReader />);
+
+      const input = document.querySelector('input[type="file"]');
+      const file = new File(['fake'], 'test.pdf', { type: 'application/pdf' });
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText('Margins')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Margins'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Adjust Margins')).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Adjust Margins')).not.toBeInTheDocument();
+      });
+    });
   });
 
   // ── Bookmark and resume flow ──────────────────────────────────────────────
