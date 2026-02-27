@@ -22,15 +22,16 @@ describe('SpeedReader', () => {
   describe('Upload screen', () => {
     it('renders logo text', () => {
       render(<SpeedReader />);
-      expect(screen.getByText('swift')).toBeInTheDocument();
-      // "read" appears in both logo and subtitle, so use getAllByText
+      // Logo is <span>speed</span>read — check the colored span
+      expect(screen.getByText('speed')).toBeInTheDocument();
       const readElements = screen.getAllByText(/read/);
       expect(readElements.length).toBeGreaterThanOrEqual(1);
     });
 
     it('renders subtitle', () => {
       render(<SpeedReader />);
-      expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+      // Subtitle is split: <a>open-source</a> speed reader
+      expect(screen.getByRole('link', { name: 'open-source' })).toBeInTheDocument();
     });
 
     it('renders File and Paste text tabs', () => {
@@ -172,7 +173,8 @@ describe('SpeedReader', () => {
       await user.click(closeButton);
 
       await waitFor(() => {
-        expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+        // upload screen is back — logo span is always visible
+        expect(screen.getByText('speed')).toBeInTheDocument();
       });
     });
   });
@@ -201,20 +203,21 @@ describe('SpeedReader', () => {
         expect(screen.getByText('Margins')).toBeInTheDocument();
       });
 
-      // Verify extractWithPDFJS was called with the margin argument
+      // Verify extractWithPDFJS was called with separate top and bottom margin args
       expect(extractWithPDFJS).toHaveBeenCalledWith(
         expect.any(File),
+        expect.any(Number),
         expect.any(Number),
         expect.any(Number)
       );
     });
 
-    it('re-extracts PDF when slider value changes', async () => {
+    it('re-extracts PDF when top margin slider value changes', async () => {
       const { extractWithPDFJS, parseTOC } = await import('../pdf.js');
       extractWithPDFJS.mockResolvedValue({
         text: 'word one two three four five six seven eight nine ten',
         pageBreaks: [{ pageNum: 1, wordIndex: 0 }],
-        pdfDoc: {},
+        pdfDoc: { getPage: vi.fn() },
       });
       parseTOC.mockResolvedValue([]);
 
@@ -228,33 +231,38 @@ describe('SpeedReader', () => {
         expect(screen.getByText('Margins')).toBeInTheDocument();
       });
 
+      // Open the margin modal
+      fireEvent.click(screen.getByText('Margins'));
+      await waitFor(() => {
+        expect(screen.getByText('Adjust Margins')).toBeInTheDocument();
+      });
+
       // Clear call history from initial load
       extractWithPDFJS.mockClear();
       extractWithPDFJS.mockResolvedValue({
         text: 'word one two three four five six seven eight nine ten',
         pageBreaks: [{ pageNum: 1, wordIndex: 0 }],
-        pdfDoc: {},
+        pdfDoc: { getPage: vi.fn() },
       });
 
-      // Find the Margins slider input (second range input after Spacing)
+      // Find the Top Margin slider inside the modal (max=0.25)
       const sliders = document.querySelectorAll('input[type="range"]');
-      const marginsSlider = Array.from(sliders).find(
-        (s) => Number(s.max) === 0.25
-      );
-      expect(marginsSlider).toBeTruthy();
+      const topMarginSlider = Array.from(sliders).find((s) => Number(s.max) === 0.25);
+      expect(topMarginSlider).toBeTruthy();
 
-      fireEvent.change(marginsSlider, { target: { value: '0.15' } });
+      fireEvent.change(topMarginSlider, { target: { value: '0.15' } });
 
       await waitFor(() => {
         expect(extractWithPDFJS).toHaveBeenCalledWith(
           expect.any(File),
           expect.any(Number),
-          0.15
+          0.15,
+          expect.any(Number)
         );
       });
     });
 
-    it('clicking Margins label opens the preview modal', async () => {
+    it('clicking Margins button opens the preview modal', async () => {
       const { extractWithPDFJS, parseTOC } = await import('../pdf.js');
       extractWithPDFJS.mockResolvedValue({
         text: 'word one two three four five six seven eight nine ten',
@@ -585,7 +593,8 @@ describe('SpeedReader', () => {
       await user.click(closeButton);
 
       await waitFor(() => {
-        expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+        // upload screen is back — logo span is always visible
+        expect(screen.getByText('speed')).toBeInTheDocument();
       });
     });
   });

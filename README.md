@@ -6,6 +6,19 @@ Check it out [here](https://speed-read-eight.vercel.app/)
 
 ---
 
+## What is RSVP?
+
+Rapid Serial Visual Presentation (RSVP) is a technique where text is displayed one word at a time at a fixed focal point. This eliminates the need for eye movements (saccades) during reading, potentially allowing for significantly faster reading speeds.
+
+The app uses Optimal Recognition Point (ORP) highlighting - the red letter in each word indicates the point where your eye naturally focuses for fastest word recognition. This is calculated based on word length:
+
+- 1-3 letter words: 1st letter
+- 4-5 letter words: 2nd letter
+- 6-9 letter words: 3rd letter
+- 10+ letter words: 4th letter
+
+---
+
 ## Features
 
 - **RSVP display** — words shown one at a time with the ORP (Optimal Recognition Point) letter pinned to the exact center of the viewport

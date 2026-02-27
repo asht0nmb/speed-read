@@ -13,7 +13,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  * Position-aware PDF text extraction.
  * Returns { text, pageBreaks, pdfDoc }
  */
-export async function extractWithPDFJS(file, spacingThreshold = 1.2, marginPercent = 0.08) {
+export async function extractWithPDFJS(file, spacingThreshold = 1.2, marginTop = 0.08, marginBottom = 0.08) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let fullText = "";
@@ -32,9 +32,10 @@ export async function extractWithPDFJS(file, spacingThreshold = 1.2, marginPerce
       if (!item.str) continue;
 
       // Skip items in header/footer margin zones
-      if (marginPercent > 0) {
+      if (marginTop > 0 || marginBottom > 0) {
         const y = item.transform[5];
-        if (y > pageHeight * (1 - marginPercent) || y < pageHeight * marginPercent) continue;
+        if (marginTop > 0 && y > pageHeight * (1 - marginTop)) continue;
+        if (marginBottom > 0 && y < pageHeight * marginBottom) continue;
       }
 
       // Normalize ligatures

@@ -90,7 +90,7 @@ export function loadPins(contentHash) {
 
 // ─── Settings persistence ────────────────────────────────────────────────────
 
-const DEFAULTS = { wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 };
+const DEFAULTS = { wpm: 300, chunkSize: 1, showORP: true, marginTop: 0.08, marginBottom: 0.08 };
 
 export function saveSettings(settings) {
   try {
@@ -103,11 +103,23 @@ export function loadSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULTS };
     const data = JSON.parse(raw);
+    const legacyMargin = typeof data.marginPercent === "number" ? data.marginPercent : null;
     return {
       wpm: typeof data.wpm === "number" ? data.wpm : DEFAULTS.wpm,
       chunkSize: typeof data.chunkSize === "number" ? data.chunkSize : DEFAULTS.chunkSize,
       showORP: typeof data.showORP === "boolean" ? data.showORP : DEFAULTS.showORP,
-      marginPercent: typeof data.marginPercent === "number" ? data.marginPercent : DEFAULTS.marginPercent,
+      marginTop:
+        typeof data.marginTop === "number"
+          ? data.marginTop
+          : legacyMargin !== null
+          ? legacyMargin
+          : DEFAULTS.marginTop,
+      marginBottom:
+        typeof data.marginBottom === "number"
+          ? data.marginBottom
+          : legacyMargin !== null
+          ? legacyMargin
+          : DEFAULTS.marginBottom,
     };
   } catch (_) {
     return { ...DEFAULTS };

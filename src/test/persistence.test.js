@@ -116,29 +116,41 @@ describe("saveSettings / loadSettings", () => {
   beforeEach(() => localStorage.clear());
 
   it("round-trips settings", () => {
-    saveSettings({ wpm: 450, chunkSize: 2, showORP: false, marginPercent: 0.12 });
+    saveSettings({ wpm: 450, chunkSize: 2, showORP: false, marginTop: 0.12, marginBottom: 0.05 });
     const s = loadSettings();
     expect(s.wpm).toBe(450);
     expect(s.chunkSize).toBe(2);
     expect(s.showORP).toBe(false);
-    expect(s.marginPercent).toBe(0.12);
+    expect(s.marginTop).toBe(0.12);
+    expect(s.marginBottom).toBe(0.05);
   });
 
   it("returns defaults when nothing stored", () => {
     const s = loadSettings();
-    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 });
+    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginTop: 0.08, marginBottom: 0.08 });
   });
 
   it("returns defaults on corrupted JSON", () => {
     localStorage.setItem("swiftread:settings", "not-json{{{");
     const s = loadSettings();
-    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 });
+    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginTop: 0.08, marginBottom: 0.08 });
   });
 
-  it("defaults marginPercent when loading old settings without it", () => {
+  it("migrates old marginPercent to marginTop and marginBottom", () => {
+    localStorage.setItem(
+      "swiftread:settings",
+      JSON.stringify({ wpm: 400, chunkSize: 1, showORP: true, marginPercent: 0.12 })
+    );
+    const s = loadSettings();
+    expect(s.marginTop).toBe(0.12);
+    expect(s.marginBottom).toBe(0.12);
+  });
+
+  it("defaults marginTop and marginBottom when loading old settings without margin keys", () => {
     saveSettings({ wpm: 400, chunkSize: 1, showORP: true });
     const s = loadSettings();
-    expect(s.marginPercent).toBe(0.08);
+    expect(s.marginTop).toBe(0.08);
+    expect(s.marginBottom).toBe(0.08);
   });
 });
 

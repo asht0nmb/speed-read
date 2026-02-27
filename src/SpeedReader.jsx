@@ -143,13 +143,11 @@ function Slider({ value, onChange, min, max, step, label, displayValue, onLabelC
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         style={{
+          "--fill": `${((value - min) / (max - min)) * 100}%`,
           width: "100%",
           height: 4,
           appearance: "none",
-          background: `linear-gradient(to right, ${THEME.accent} ${
-            ((value - min) / (max - min)) * 100
-          }%, ${THEME.border} ${((value - min) / (max - min)) * 100}%)`,
-          borderRadius: 2,
+          background: "transparent",
           outline: "none",
           cursor: "pointer",
         }}
@@ -483,7 +481,7 @@ function KeyboardHints({ onClose }) {
 
 // ─── Margin Preview Modal ─────────────────────────────────────────────────────
 
-function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose }) {
+function MarginPreview({ pdfDoc, pageNum, marginTop, marginBottom, onMarginTopChange, onMarginBottomChange, onClose }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -508,7 +506,8 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
     };
   }, [pdfDoc, pageNum]);
 
-  const zonePct = `${marginPercent * 100}%`;
+  const topZonePct = `${marginTop * 100}%`;
+  const bottomZonePct = `${marginBottom * 100}%`;
 
   return (
     <>
@@ -595,7 +594,7 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
               top: 0,
               left: 0,
               right: 0,
-              height: zonePct,
+              height: topZonePct,
               background: "rgba(220,50,50,0.15)",
               borderBottom: `2px dashed ${THEME.accent}`,
               pointerEvents: "none",
@@ -607,22 +606,33 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
               bottom: 0,
               left: 0,
               right: 0,
-              height: zonePct,
+              height: bottomZonePct,
               background: "rgba(220,50,50,0.15)",
               borderTop: `2px dashed ${THEME.accent}`,
               pointerEvents: "none",
             }}
           />
         </div>
-        <Slider
-          label="Margins"
-          value={marginPercent}
-          onChange={onMarginChange}
-          min={0}
-          max={0.25}
-          step={0.01}
-          displayValue={`${Math.round(marginPercent * 100)}%`}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Slider
+            label="Top Margin"
+            value={marginTop}
+            onChange={onMarginTopChange}
+            min={0}
+            max={0.25}
+            step={0.01}
+            displayValue={`${Math.round(marginTop * 100)}%`}
+          />
+          <Slider
+            label="Bottom Margin"
+            value={marginBottom}
+            onChange={onMarginBottomChange}
+            min={0}
+            max={0.25}
+            step={0.01}
+            displayValue={`${Math.round(marginBottom * 100)}%`}
+          />
+        </div>
       </div>
     </>
   );
@@ -707,7 +717,8 @@ export default function SpeedReader() {
   const [pageBreaks, setPageBreaks] = useState([]);
   const [tocEntries, setTocEntries] = useState([]);
   const [spacingThreshold, setSpacingThreshold] = useState(1.2);
-  const [marginPercent, setMarginPercent] = useState(() => loadSettings().marginPercent);
+  const [marginTop, setMarginTop] = useState(() => loadSettings().marginTop);
+  const [marginBottom, setMarginBottom] = useState(() => loadSettings().marginBottom);
 
   // UI state
   const [viewMode, setViewMode] = useState("rsvp"); // 'rsvp' | 'text' | 'pdf'
@@ -792,8 +803,8 @@ export default function SpeedReader() {
   // ── Auto-save settings ─────────────────────────────────────────────────────
 
   useEffect(() => {
-    saveSettings({ wpm, chunkSize, showORP, marginPercent });
-  }, [wpm, chunkSize, showORP, marginPercent]);
+    saveSettings({ wpm, chunkSize, showORP, marginTop, marginBottom });
+  }, [wpm, chunkSize, showORP, marginTop, marginBottom]);
 
   // ── Named pins ──────────────────────────────────────────────────────────
 
@@ -846,7 +857,8 @@ export default function SpeedReader() {
           const { text, pageBreaks: pb, pdfDoc: doc } = await extractWithPDFJS(
             file,
             spacingThreshold,
-            marginPercent
+            marginTop,
+            marginBottom
           );
           if (!text || text.trim().length < 20) throw new Error("Empty extraction");
           tokenizedWords = tokenize(text);
@@ -888,18 +900,19 @@ export default function SpeedReader() {
       // Load named pins
       setPins(loadPins(hash));
     },
-    [spacingThreshold, marginPercent]
+    [spacingThreshold, marginTop, marginBottom]
   );
 
   // Re-extract when spacing threshold or margin changes
   const reExtract = useCallback(
-    async (threshold, margin) => {
+    async (threshold, top, bottom) => {
       if (!currentFileRef.current) return;
       try {
         const { text, pageBreaks: pb, pdfDoc: doc } = await extractWithPDFJS(
           currentFileRef.current,
           threshold,
-          margin
+          top,
+          bottom
         );
         setRawText(text);
         setWords(tokenize(text));
@@ -1392,10 +1405,15 @@ export default function SpeedReader() {
         <MarginPreview
           pdfDoc={pdfDoc}
           pageNum={currentPageNum}
-          marginPercent={marginPercent}
-          onMarginChange={(v) => {
-            setMarginPercent(v);
-            reExtract(spacingThreshold, v);
+          marginTop={marginTop}
+          marginBottom={marginBottom}
+          onMarginTopChange={(v) => {
+            setMarginTop(v);
+            reExtract(spacingThreshold, v, marginBottom);
+          }}
+          onMarginBottomChange={(v) => {
+            setMarginBottom(v);
+            reExtract(spacingThreshold, marginTop, v);
           }}
           onClose={() => setShowMarginPreview(false)}
         />
@@ -1935,26 +1953,36 @@ export default function SpeedReader() {
                   value={spacingThreshold}
                   onChange={(v) => {
                     setSpacingThreshold(v);
-                    reExtract(v, marginPercent);
+                    reExtract(v, marginTop, marginBottom);
                   }}
                   min={0.3}
                   max={3.0}
                   step={0.1}
                   displayValue={spacingThreshold.toFixed(1)}
                 />
-                <Slider
-                  label="Margins"
-                  value={marginPercent}
-                  onChange={(v) => {
-                    setMarginPercent(v);
-                    reExtract(spacingThreshold, v);
+                <button
+                  onClick={() => setShowMarginPreview(true)}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    minWidth: 130,
+                    background: "transparent",
+                    border: `1px solid ${THEME.border}`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    cursor: "pointer",
+                    fontFamily: FONTS.body,
+                    color: THEME.textDim,
                   }}
-                  min={0}
-                  max={0.25}
-                  step={0.01}
-                  displayValue={`${Math.round(marginPercent * 100)}%`}
-                  onLabelClick={() => setShowMarginPreview(true)}
-                />
+                >
+                  <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                    Margins
+                  </span>
+                  <span style={{ fontSize: 11, color: THEME.accent, fontFamily: FONTS.display }}>
+                    {Math.round(marginTop * 100)}% / {Math.round(marginBottom * 100)}%
+                  </span>
+                </button>
               </>
             )}
           </div>
@@ -1963,6 +1991,24 @@ export default function SpeedReader() {
 
       {/* Global styles */}
       <style>{`
+        input[type="range"]::-webkit-slider-runnable-track {
+          height: 4px;
+          border-radius: 2px;
+          background: linear-gradient(
+            to right,
+            ${THEME.accent} var(--fill),
+            ${THEME.textDim} var(--fill)
+          );
+        }
+        input[type="range"]::-moz-range-track {
+          height: 4px;
+          border-radius: 2px;
+          background: linear-gradient(
+            to right,
+            ${THEME.accent} var(--fill),
+            ${THEME.textDim} var(--fill)
+          );
+        }
         input[type="range"]::-webkit-slider-thumb {
           -webkit-appearance: none;
           width: 14px;
@@ -1971,6 +2017,7 @@ export default function SpeedReader() {
           background: ${THEME.accent};
           cursor: pointer;
           box-shadow: 0 0 8px ${THEME.accent}66;
+          margin-top: -5px;
         }
         input[type="range"]::-moz-range-thumb {
           width: 14px;

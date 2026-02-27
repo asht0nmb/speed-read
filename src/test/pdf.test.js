@@ -47,7 +47,7 @@ describe('extractWithPDFJS margin filtering', () => {
       ],
     }]);
 
-    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0);
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0, 0);
     expect(text).toContain('header');
     expect(text).toContain('body');
     expect(text).toContain('footer');
@@ -64,7 +64,7 @@ describe('extractWithPDFJS margin filtering', () => {
     }]);
 
     // 8% of 1000 = 80. footer y=50 < 80, header y=950 > 920
-    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08);
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08, 0.08);
     expect(text).not.toContain('header');
     expect(text).toContain('body');
     expect(text).not.toContain('footer');
@@ -82,7 +82,7 @@ describe('extractWithPDFJS margin filtering', () => {
       ],
     }]);
 
-    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08);
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.08, 0.08);
     expect(text).toContain('atbottom');
     expect(text).toContain('attop');
     expect(text).toContain('middle');
@@ -99,7 +99,7 @@ describe('extractWithPDFJS margin filtering', () => {
     }]);
 
     // 25% of 1000 = 250. nearBottom y=200 < 250, nearTop y=800 > 750
-    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.25);
+    const { text } = await extractWithPDFJS(makeFile(), 1.2, 0.25, 0.25);
     expect(text).not.toContain('nearTop');
     expect(text).toContain('center');
     expect(text).not.toContain('nearBottom');
