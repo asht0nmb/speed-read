@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { THEME, FONTS, tokenize, findORP, pauseMultiplier } from "./utils.js";
+import { THEME, FONTS, tokenize, findORP, pauseMultiplier, cleanText, filterTokens } from "./utils.js";
 import { extractWithPDFJS, parseTOC } from "./pdf.js";
 import {
   hashFile,
@@ -28,7 +28,8 @@ import {
   Upload,
   Bookmark,
   Linkedin,
-  Github
+  Github,
+  Settings
 } from "lucide-react";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -387,6 +388,7 @@ function KeyboardHints({ onClose }) {
     ["O", "Toggle ORP highlight"],
     ["M", "Add pin at position"],
     ["B", "Jump to bookmark"],
+    ["S", "Settings"],
     ["?", "This panel"],
     ["Esc", "Pause / close panels"],
   ];
@@ -481,17 +483,218 @@ function KeyboardHints({ onClose }) {
   );
 }
 
+// ─── Settings Modal ──────────────────────────────────────────────────────────
+
+export function SettingsModal({
+  chunkSize,
+  onChunkChange,
+  pauseScale,
+  onPauseScaleChange,
+  spacingThreshold,
+  onSpacingChange,
+  hasPDF,
+  onClose,
+  filterCitations,
+  onFilterCitationsChange,
+  filterReferenceSections,
+  onFilterReferenceSectionsChange,
+  filterCaptions,
+  onFilterCaptionsChange,
+  filterPageNumbers,
+  onFilterPageNumbersChange,
+}) {
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.5)",
+          zIndex: 40,
+        }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%,-50%)",
+          background: THEME.surface,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 12,
+          padding: "24px 32px",
+          zIndex: 50,
+          minWidth: 300,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 20,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: FONTS.body,
+              fontSize: 12,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: THEME.textDim,
+            }}
+          >
+            Settings
+          </span>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              color: THEME.textDim,
+              cursor: "pointer",
+              fontSize: 18,
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div
+          style={{
+            fontFamily: FONTS.body,
+            fontSize: 11,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            color: THEME.accent,
+            marginBottom: 12,
+          }}
+        >
+          Reading
+        </div>
+
+        <Slider
+          label="Chunk"
+          value={chunkSize}
+          onChange={onChunkChange}
+          min={1}
+          max={5}
+          step={2}
+          displayValue={`${chunkSize} word${chunkSize > 1 ? "s" : ""}`}
+        />
+        <div style={{ height: 8 }} />
+        <Slider
+          label="Pause"
+          value={pauseScale}
+          onChange={onPauseScaleChange}
+          min={1.0}
+          max={2.0}
+          step={0.1}
+          displayValue={`${pauseScale.toFixed(1)}×`}
+        />
+
+        {hasPDF && (
+          <>
+            <div
+              style={{
+                fontFamily: FONTS.body,
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                color: THEME.accent,
+                marginTop: 20,
+                marginBottom: 12,
+              }}
+            >
+              PDF
+            </div>
+            <Slider
+              label="Spacing"
+              value={spacingThreshold}
+              onChange={onSpacingChange}
+              min={0.3}
+              max={3.0}
+              step={0.1}
+              displayValue={spacingThreshold.toFixed(1)}
+            />
+          </>
+        )}
+
+        <div
+          style={{
+            fontFamily: FONTS.body,
+            fontSize: 11,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            color: THEME.accent,
+            marginTop: 20,
+            marginBottom: 12,
+          }}
+        >
+          Filtering
+        </div>
+
+        {[
+          { label: "Citations", desc: "Remove [1], (Smith, 2020), etc.", checked: filterCitations, onChange: onFilterCitationsChange },
+          { label: "References", desc: "Remove References / Bibliography sections", checked: filterReferenceSections, onChange: onFilterReferenceSectionsChange },
+          { label: "Captions", desc: "Remove Figure 1:, Table 2:, etc.", checked: filterCaptions, onChange: onFilterCaptionsChange },
+          { label: "Page numbers", desc: "Remove standalone page numbers", checked: filterPageNumbers, onChange: onFilterPageNumbersChange },
+        ].map(({ label, desc, checked, onChange }) => (
+          <label
+            key={label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontFamily: FONTS.body,
+              fontSize: 13,
+              color: THEME.text,
+              cursor: "pointer",
+              marginBottom: 8,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => onChange(e.target.checked)}
+              style={{ accentColor: THEME.accent, width: 16, height: 16, cursor: "pointer" }}
+            />
+            <span>
+              {label}
+              <span style={{ color: THEME.textDim, fontSize: 11, marginLeft: 6 }}>{desc}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ─── Margin Preview Modal ─────────────────────────────────────────────────────
 
 function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose }) {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     async function render() {
       try {
         const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1.5 });
+        const naturalVp = page.getViewport({ scale: 1 });
+
+        const container = containerRef.current;
+        if (!container || cancelled) return;
+
+        const availableWidth = container.offsetWidth;
+        const availableHeight = window.innerHeight * 0.6;
+
+        const scaleByWidth = availableWidth / naturalVp.width;
+        const scaleByHeight = availableHeight / naturalVp.height;
+        const scale = Math.min(scaleByWidth, scaleByHeight);
+
+        const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
         canvas.width = viewport.width;
@@ -534,6 +737,9 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
           zIndex: 50,
           maxWidth: 600,
           width: "90vw",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         <div
@@ -578,41 +784,45 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
           </button>
         </div>
         <div
+          ref={containerRef}
           style={{
-            position: "relative",
-            overflow: "hidden",
+            overflow: "auto",
             borderRadius: 8,
             marginBottom: 16,
+            flex: "1 1 auto",
+            minHeight: 0,
           }}
         >
-          <canvas
-            ref={canvasRef}
-            style={{ width: "100%", display: "block" }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              height: zonePct,
-              background: "rgba(220,50,50,0.15)",
-              borderBottom: `2px dashed ${THEME.accent}`,
-              pointerEvents: "none",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: zonePct,
-              background: "rgba(220,50,50,0.15)",
-              borderTop: `2px dashed ${THEME.accent}`,
-              pointerEvents: "none",
-            }}
-          />
+          <div style={{ position: "relative" }}>
+            <canvas
+              ref={canvasRef}
+              style={{ width: "100%", display: "block" }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: zonePct,
+                background: "rgba(220,50,50,0.15)",
+                borderBottom: `2px dashed ${THEME.accent}`,
+                pointerEvents: "none",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: zonePct,
+                background: "rgba(220,50,50,0.15)",
+                borderTop: `2px dashed ${THEME.accent}`,
+                pointerEvents: "none",
+              }}
+            />
+          </div>
         </div>
         <Slider
           label="Margins"
@@ -706,8 +916,15 @@ export default function SpeedReader() {
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageBreaks, setPageBreaks] = useState([]);
   const [tocEntries, setTocEntries] = useState([]);
-  const [spacingThreshold, setSpacingThreshold] = useState(1.2);
+  const [spacingThreshold, setSpacingThreshold] = useState(() => loadSettings().spacingThreshold);
   const [marginPercent, setMarginPercent] = useState(() => loadSettings().marginPercent);
+  const [pauseScale, setPauseScale] = useState(() => loadSettings().pauseScale);
+
+  // Filtering
+  const [filterCitations, setFilterCitations] = useState(() => loadSettings().filterCitations);
+  const [filterReferenceSections, setFilterReferenceSections] = useState(() => loadSettings().filterReferenceSections);
+  const [filterCaptions, setFilterCaptions] = useState(() => loadSettings().filterCaptions);
+  const [filterPageNumbers, setFilterPageNumbers] = useState(() => loadSettings().filterPageNumbers);
 
   // UI state
   const [viewMode, setViewMode] = useState("rsvp"); // 'rsvp' | 'text' | 'pdf'
@@ -718,6 +935,7 @@ export default function SpeedReader() {
   const [pasteText, setPasteText] = useState("");
   const [showTOC, setShowTOC] = useState(false);
   const [showKeyboardHints, setShowKeyboardHints] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showMarginPreview, setShowMarginPreview] = useState(false);
 
   // Persistence
@@ -742,7 +960,7 @@ export default function SpeedReader() {
       }
       const word = words[Math.min(index + chunkSize - 1, words.length - 1)];
       const baseMs = (60000 / wpm) * chunkSize;
-      const delay = baseMs * pauseMultiplier(word);
+      const delay = baseMs * pauseMultiplier(word, pauseScale);
 
       timeoutRef.current = setTimeout(() => {
         const next = index + chunkSize;
@@ -755,7 +973,7 @@ export default function SpeedReader() {
         scheduleNext(next);
       }, delay);
     },
-    [words, wpm, chunkSize]
+    [words, wpm, chunkSize, pauseScale]
   );
 
   useEffect(() => {
@@ -792,8 +1010,8 @@ export default function SpeedReader() {
   // ── Auto-save settings ─────────────────────────────────────────────────────
 
   useEffect(() => {
-    saveSettings({ wpm, chunkSize, showORP, marginPercent });
-  }, [wpm, chunkSize, showORP, marginPercent]);
+    saveSettings({ wpm, chunkSize, showORP, marginPercent, pauseScale, spacingThreshold, filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers });
+  }, [wpm, chunkSize, showORP, marginPercent, pauseScale, spacingThreshold, filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers]);
 
   // ── Named pins ──────────────────────────────────────────────────────────
 
@@ -816,6 +1034,27 @@ export default function SpeedReader() {
     },
     [pins, contentHash]
   );
+
+  // ── Text filtering ──────────────────────────────────────────────────────
+
+  const applyFilters = useCallback(
+    (text) => {
+      const cleaned = cleanText(text, {
+        inlineCitations: filterCitations,
+        parentheticalCitations: filterCitations,
+        referenceSections: filterReferenceSections,
+        captions: filterCaptions,
+        pageNumbers: filterPageNumbers,
+      });
+      return filterTokens(tokenize(cleaned), { inlineCitations: filterCitations });
+    },
+    [filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers]
+  );
+
+  // Re-filter when filter toggles change
+  useEffect(() => {
+    if (rawText) setWords(applyFilters(rawText));
+  }, [applyFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── File processing ───────────────────────────────────────────────────────
 
@@ -849,8 +1088,8 @@ export default function SpeedReader() {
             marginPercent
           );
           if (!text || text.trim().length < 20) throw new Error("Empty extraction");
-          tokenizedWords = tokenize(text);
           setRawText(text);
+          tokenizedWords = applyFilters(text);
           setWords(tokenizedWords);
           setPageBreaks(pb);
           setPdfDoc(doc);
@@ -866,8 +1105,8 @@ export default function SpeedReader() {
         try {
           const text = await file.text();
           if (!text || text.trim().length === 0) throw new Error("Empty");
-          tokenizedWords = tokenize(text);
           setRawText(text);
+          tokenizedWords = applyFilters(text);
           setWords(tokenizedWords);
         } catch {
           setUploadError("Could not read this file. Try a plain text or PDF file.");
@@ -888,7 +1127,7 @@ export default function SpeedReader() {
       // Load named pins
       setPins(loadPins(hash));
     },
-    [spacingThreshold, marginPercent]
+    [spacingThreshold, marginPercent, applyFilters]
   );
 
   // Re-extract when spacing threshold or margin changes
@@ -902,7 +1141,7 @@ export default function SpeedReader() {
           margin
         );
         setRawText(text);
-        setWords(tokenize(text));
+        setWords(applyFilters(text));
         setPageBreaks(pb);
         setPdfDoc(doc);
         setCurrentIndex(0);
@@ -911,7 +1150,7 @@ export default function SpeedReader() {
         console.error("Re-extraction failed:", err);
       }
     },
-    []
+    [applyFilters]
   );
 
   const handleFile = useCallback(
@@ -951,8 +1190,8 @@ export default function SpeedReader() {
     const hash = "paste:" + hashText(pasteText);
     setContentHash(hash);
 
-    const tokenizedWords = tokenize(pasteText);
     setRawText(pasteText);
+    const tokenizedWords = applyFilters(pasteText);
     setWords(tokenizedWords);
 
     // Check for existing bookmark
@@ -967,7 +1206,7 @@ export default function SpeedReader() {
 
     // Load named pins
     setPins(loadPins(hash));
-  }, [pasteText]);
+  }, [pasteText, applyFilters]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -1025,10 +1264,14 @@ export default function SpeedReader() {
         case "M":
           if (words.length > 0) addPin();
           break;
+        case "s":
+          setShowSettings((v) => !v);
+          break;
         case "Escape":
           setIsPlaying(false);
           setShowTOC(false);
           setShowKeyboardHints(false);
+          setShowSettings(false);
           setShowMarginPreview(false);
           setPendingResume(null);
           break;
@@ -1050,7 +1293,7 @@ export default function SpeedReader() {
         let totalMs = 0;
         for (let i = currentIndex; i < words.length; i += chunkSize) {
           const lastWord = words[Math.min(i + chunkSize - 1, words.length - 1)];
-          totalMs += baseMs * chunkSize * pauseMultiplier(lastWord);
+          totalMs += baseMs * chunkSize * pauseMultiplier(lastWord, pauseScale);
         }
         return Math.ceil(totalMs / 60000);
       })()
@@ -1388,6 +1631,29 @@ export default function SpeedReader() {
       {showKeyboardHints && (
         <KeyboardHints onClose={() => setShowKeyboardHints(false)} />
       )}
+      {showSettings && (
+        <SettingsModal
+          chunkSize={chunkSize}
+          onChunkChange={setChunkSize}
+          pauseScale={pauseScale}
+          onPauseScaleChange={setPauseScale}
+          spacingThreshold={spacingThreshold}
+          onSpacingChange={(v) => {
+            setSpacingThreshold(v);
+            reExtract(v, marginPercent);
+          }}
+          hasPDF={!!currentFileRef.current}
+          onClose={() => setShowSettings(false)}
+          filterCitations={filterCitations}
+          onFilterCitationsChange={setFilterCitations}
+          filterReferenceSections={filterReferenceSections}
+          onFilterReferenceSectionsChange={setFilterReferenceSections}
+          filterCaptions={filterCaptions}
+          onFilterCaptionsChange={setFilterCaptions}
+          filterPageNumbers={filterPageNumbers}
+          onFilterPageNumbersChange={setFilterPageNumbers}
+        />
+      )}
       {showMarginPreview && pdfDoc && (
         <MarginPreview
           pdfDoc={pdfDoc}
@@ -1516,6 +1782,12 @@ export default function SpeedReader() {
             }}
           />
 
+          <IconButton
+            onClick={() => setShowSettings(true)}
+            title="Settings (S)"
+          >
+            <Settings size={16} />
+          </IconButton>
           <IconButton
             onClick={() => setShowKeyboardHints(true)}
             title="Keyboard shortcuts (?)"
@@ -1919,43 +2191,20 @@ export default function SpeedReader() {
               step={25}
               displayValue={`${wpm} wpm`}
             />
-            <Slider
-              label="Chunk"
-              value={chunkSize}
-              onChange={setChunkSize}
-              min={1}
-              max={5}
-              step={1}
-              displayValue={`${chunkSize}w`}
-            />
             {currentFileRef.current && (
-              <>
-                <Slider
-                  label="Spacing"
-                  value={spacingThreshold}
-                  onChange={(v) => {
-                    setSpacingThreshold(v);
-                    reExtract(v, marginPercent);
-                  }}
-                  min={0.3}
-                  max={3.0}
-                  step={0.1}
-                  displayValue={spacingThreshold.toFixed(1)}
-                />
-                <Slider
-                  label="Margins"
-                  value={marginPercent}
-                  onChange={(v) => {
-                    setMarginPercent(v);
-                    reExtract(spacingThreshold, v);
-                  }}
-                  min={0}
-                  max={0.25}
-                  step={0.01}
-                  displayValue={`${Math.round(marginPercent * 100)}%`}
-                  onLabelClick={() => setShowMarginPreview(true)}
-                />
-              </>
+              <Slider
+                label="Margins"
+                value={marginPercent}
+                onChange={(v) => {
+                  setMarginPercent(v);
+                  reExtract(spacingThreshold, v);
+                }}
+                min={0}
+                max={0.25}
+                step={0.01}
+                displayValue={`${Math.round(marginPercent * 100)}%`}
+                onLabelClick={() => setShowMarginPreview(true)}
+              />
             )}
           </div>
         </div>

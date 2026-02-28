@@ -90,7 +90,7 @@ export function loadPins(contentHash) {
 
 // ─── Settings persistence ────────────────────────────────────────────────────
 
-const DEFAULTS = { wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 };
+const DEFAULTS = { wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2, filterCitations: true, filterReferenceSections: true, filterCaptions: false, filterPageNumbers: false };
 
 export function saveSettings(settings) {
   try {
@@ -103,11 +103,18 @@ export function loadSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULTS };
     const data = JSON.parse(raw);
+    const chunkRaw = typeof data.chunkSize === "number" ? data.chunkSize : DEFAULTS.chunkSize;
     return {
       wpm: typeof data.wpm === "number" ? data.wpm : DEFAULTS.wpm,
-      chunkSize: typeof data.chunkSize === "number" ? data.chunkSize : DEFAULTS.chunkSize,
+      chunkSize: chunkRaw % 2 === 0 ? chunkRaw - 1 : chunkRaw,
       showORP: typeof data.showORP === "boolean" ? data.showORP : DEFAULTS.showORP,
       marginPercent: typeof data.marginPercent === "number" ? data.marginPercent : DEFAULTS.marginPercent,
+      pauseScale: typeof data.pauseScale === "number" ? data.pauseScale : DEFAULTS.pauseScale,
+      spacingThreshold: typeof data.spacingThreshold === "number" ? data.spacingThreshold : DEFAULTS.spacingThreshold,
+      filterCitations: typeof data.filterCitations === "boolean" ? data.filterCitations : DEFAULTS.filterCitations,
+      filterReferenceSections: typeof data.filterReferenceSections === "boolean" ? data.filterReferenceSections : DEFAULTS.filterReferenceSections,
+      filterCaptions: typeof data.filterCaptions === "boolean" ? data.filterCaptions : DEFAULTS.filterCaptions,
+      filterPageNumbers: typeof data.filterPageNumbers === "boolean" ? data.filterPageNumbers : DEFAULTS.filterPageNumbers,
     };
   } catch (_) {
     return { ...DEFAULTS };

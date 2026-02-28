@@ -116,29 +116,57 @@ describe("saveSettings / loadSettings", () => {
   beforeEach(() => localStorage.clear());
 
   it("round-trips settings", () => {
-    saveSettings({ wpm: 450, chunkSize: 2, showORP: false, marginPercent: 0.12 });
+    saveSettings({ wpm: 450, chunkSize: 3, showORP: false, marginPercent: 0.12, pauseScale: 0.5, spacingThreshold: 2.0 });
     const s = loadSettings();
     expect(s.wpm).toBe(450);
-    expect(s.chunkSize).toBe(2);
+    expect(s.chunkSize).toBe(3);
     expect(s.showORP).toBe(false);
     expect(s.marginPercent).toBe(0.12);
+    expect(s.pauseScale).toBe(0.5);
+    expect(s.spacingThreshold).toBe(2.0);
   });
 
   it("returns defaults when nothing stored", () => {
     const s = loadSettings();
-    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 });
+    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2, filterCitations: true, filterReferenceSections: true, filterCaptions: false, filterPageNumbers: false });
   });
 
   it("returns defaults on corrupted JSON", () => {
     localStorage.setItem("swiftread:settings", "not-json{{{");
     const s = loadSettings();
-    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08 });
+    expect(s).toEqual({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2, filterCitations: true, filterReferenceSections: true, filterCaptions: false, filterPageNumbers: false });
   });
 
   it("defaults marginPercent when loading old settings without it", () => {
     saveSettings({ wpm: 400, chunkSize: 1, showORP: true });
     const s = loadSettings();
     expect(s.marginPercent).toBe(0.08);
+  });
+
+  it("defaults pauseScale and spacingThreshold when loading old settings", () => {
+    saveSettings({ wpm: 400, chunkSize: 1, showORP: true, marginPercent: 0.08 });
+    const s = loadSettings();
+    expect(s.pauseScale).toBe(1.0);
+    expect(s.spacingThreshold).toBe(1.2);
+  });
+
+  it("round-trips pauseScale and spacingThreshold", () => {
+    saveSettings({ wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 0.5, spacingThreshold: 2.0 });
+    const s = loadSettings();
+    expect(s.pauseScale).toBe(0.5);
+    expect(s.spacingThreshold).toBe(2.0);
+  });
+
+  it("coerces even chunkSize to odd on load", () => {
+    saveSettings({ wpm: 300, chunkSize: 4, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2 });
+    const s = loadSettings();
+    expect(s.chunkSize).toBe(3);
+  });
+
+  it("preserves odd chunkSize on load", () => {
+    saveSettings({ wpm: 300, chunkSize: 3, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2 });
+    const s = loadSettings();
+    expect(s.chunkSize).toBe(3);
   });
 });
 
@@ -191,5 +219,51 @@ describe("savePins / loadPins", () => {
   it("returns empty array when stored value is not an array", () => {
     localStorage.setItem("swiftread:pins:obj", JSON.stringify({ not: "array" }));
     expect(loadPins("obj")).toEqual([]);
+  });
+});
+
+// ─── Filter settings persistence ────────────────────────────────────────────
+
+describe("filter settings persistence", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("round-trips new filter settings", () => {
+    saveSettings({
+      wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08,
+      pauseScale: 1.0, spacingThreshold: 1.2,
+      filterCitations: false, filterReferenceSections: false,
+      filterCaptions: true, filterPageNumbers: true,
+    });
+    const s = loadSettings();
+    expect(s.filterCitations).toBe(false);
+    expect(s.filterReferenceSections).toBe(false);
+    expect(s.filterCaptions).toBe(true);
+    expect(s.filterPageNumbers).toBe(true);
+  });
+
+  it("defaults new filter booleans when loading old settings without them", () => {
+    saveSettings({ wpm: 400, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2 });
+    const s = loadSettings();
+    expect(s.filterCitations).toBe(true);
+    expect(s.filterReferenceSections).toBe(true);
+    expect(s.filterCaptions).toBe(false);
+    expect(s.filterPageNumbers).toBe(false);
+  });
+
+  it("returns correct defaults for filter fields when nothing is stored", () => {
+    const s = loadSettings();
+    expect(s.filterCitations).toBe(true);
+    expect(s.filterReferenceSections).toBe(true);
+    expect(s.filterCaptions).toBe(false);
+    expect(s.filterPageNumbers).toBe(false);
+  });
+
+  it("returns correct defaults for filter fields on corrupted JSON", () => {
+    localStorage.setItem("swiftread:settings", "not-json{{{");
+    const s = loadSettings();
+    expect(s.filterCitations).toBe(true);
+    expect(s.filterReferenceSections).toBe(true);
+    expect(s.filterCaptions).toBe(false);
+    expect(s.filterPageNumbers).toBe(false);
   });
 });
