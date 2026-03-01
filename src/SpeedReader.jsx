@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { THEME, FONTS, tokenize, findORP, pauseMultiplier, cleanText, filterTokens } from "./utils.js";
 import { extractWithPDFJS, parseTOC } from "./pdf.js";
 import {
@@ -11,6 +11,10 @@ import {
   loadSettings,
   savePins,
   loadPins,
+  saveRecentDoc,
+  loadRecentDocs,
+  updateRecentDocProgress,
+  removeRecentDoc,
 } from "./persistence.js";
 import {
   Menu,
@@ -29,7 +33,14 @@ import {
   Bookmark,
   Linkedin,
   Github,
-  Settings
+  Settings,
+  Clock,
+  Trash2,
+  Globe,
+  BookOpen,
+  Link as LinkIcon,
+  Type,
+  FileType,
 } from "lucide-react";
 
 // ─── Demo text ────────────────────────────────────────────────────────────────
@@ -1124,6 +1135,232 @@ function MarginPreview({ pdfDoc, pageNum, marginPercent, onMarginChange, onClose
   );
 }
 
+// ─── EPUB extraction ─────────────────────────────────────────────────────────
+
+async function extractWithEpub(file) {
+  const ePub = (await import("epubjs")).default;
+  const arrayBuffer = await file.arrayBuffer();
+  const book = ePub(arrayBuffer);
+  await book.ready;
+
+  const spine = book.spine;
+  let fullText = "";
+  const pageBreaks = [];
+  const tocEntries = [];
+
+  // Extract text from spine items (chapters)
+  let chapterIndex = 0;
+  for (const item of spine.items) {
+    const doc = await book.load(item.href);
+    const wordsBefore = tokenize(fullText).length;
+    pageBreaks.push({ pageNum: chapterIndex + 1, wordIndex: wordsBefore });
+
+    const elements = doc.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
+    const chapterParts = [];
+    for (const el of elements) {
+      const text = el.textContent.trim();
+      if (text) chapterParts.push(text);
+    }
+    if (chapterParts.length > 0) {
+      fullText += (fullText ? "\n\n" : "") + chapterParts.join("\n\n");
+    }
+    chapterIndex++;
+  }
+
+  // Extract TOC
+  const nav = await book.loaded.navigation;
+  if (nav && nav.toc) {
+    const flattenNav = (items, depth = 0) => {
+      for (const item of items) {
+        // Find closest pageBreak by matching href
+        const spineIdx = spine.items.findIndex((s) => item.href.includes(s.href));
+        const pb = spineIdx >= 0 ? pageBreaks[spineIdx] : pageBreaks[0];
+        tocEntries.push({
+          title: item.label.trim(),
+          pageNum: pb?.pageNum ?? 1,
+          wordIndex: pb?.wordIndex ?? 0,
+          depth,
+        });
+        if (item.subitems?.length) flattenNav(item.subitems, depth + 1);
+      }
+    };
+    flattenNav(nav.toc);
+  }
+
+  book.destroy();
+  return { text: fullText.trim(), pageBreaks, tocEntries };
+}
+
+// ─── URL extraction ──────────────────────────────────────────────────────────
+
+async function fetchViaProxy(url) {
+  const proxies = [
+    (u) => ({ url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, parse: (r) => r.text() }),
+    (u) => ({ url: `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, parse: (r) => r.text() }),
+    (u) => ({ url: `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, parse: async (r) => (await r.json()).contents }),
+  ];
+  let lastError;
+  for (const makeProxy of proxies) {
+    const { url: proxyUrl, parse } = makeProxy(url);
+    try {
+      const resp = await fetch(proxyUrl);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const html = await parse(resp);
+      if (html && html.length > 100) return html;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(lastError?.message || "All proxies failed. Try a different URL.");
+}
+
+async function fetchAndExtractURL(rawUrl) {
+  let url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+
+  const html = await fetchViaProxy(url);
+
+  const { Readability } = await import("@mozilla/readability");
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const base = doc.createElement("base");
+  base.href = url;
+  doc.head.prepend(base);
+  const article = new Readability(doc).parse();
+  if (!article || !article.textContent || article.textContent.trim().length < 20) {
+    throw new Error("Could not extract article content from this URL.");
+  }
+  return { title: article.title || url, text: article.textContent.trim() };
+}
+
+// ─── Recent Document Card ────────────────────────────────────────────────────
+
+const FILE_TYPE_ICONS = {
+  pdf: FileText,
+  epub: BookOpen,
+  txt: Type,
+  paste: FileType,
+  url: Globe,
+};
+
+function relativeTime(timestamp) {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
+function RecentDocCard({ doc, onOpen, onRemove }) {
+  const Icon = FILE_TYPE_ICONS[doc.fileType] || FileText;
+  return (
+    <div
+      onClick={onOpen}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 14px",
+        background: THEME.surface,
+        border: `1px solid ${THEME.border}`,
+        borderRadius: 10,
+        cursor: "pointer",
+        transition: "all 0.15s",
+        position: "relative",
+      }}
+      onMouseOver={(e) => {
+        e.currentTarget.style.borderColor = THEME.accent + "66";
+      }}
+      onMouseOut={(e) => {
+        e.currentTarget.style.borderColor = THEME.border;
+      }}
+    >
+      <div
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: THEME.accentDim,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <Icon size={14} style={{ color: THEME.accent }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 13,
+            color: THEME.text,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontWeight: 400,
+          }}
+        >
+          {doc.title}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 3 }}>
+          <span style={{ fontSize: 11, color: THEME.textDim, textTransform: "uppercase" }}>
+            {doc.fileType}
+          </span>
+          <span style={{ fontSize: 11, color: THEME.textDim }}>
+            {doc.wordCount?.toLocaleString()} words
+          </span>
+          <span style={{ fontSize: 11, color: THEME.textDim }}>
+            <Clock size={9} style={{ marginRight: 2, verticalAlign: "middle" }} />
+            {relativeTime(doc.lastOpenedAt)}
+          </span>
+        </div>
+        {/* Progress bar */}
+        <div
+          style={{
+            marginTop: 5,
+            height: 2,
+            background: THEME.border,
+            borderRadius: 1,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${doc.progressPercent || 0}%`,
+              background: THEME.accent,
+              borderRadius: 1,
+            }}
+          />
+        </div>
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        style={{
+          background: "none",
+          border: "none",
+          color: THEME.textDim,
+          cursor: "pointer",
+          padding: 4,
+          opacity: 0.4,
+          transition: "opacity 0.15s",
+        }}
+        onMouseOver={(e) => { e.currentTarget.style.opacity = 1; }}
+        onMouseOut={(e) => { e.currentTarget.style.opacity = 0.4; }}
+        title="Remove"
+      >
+        <Trash2 size={12} />
+      </button>
+    </div>
+  );
+}
+
 // ─── Resume Banner ───────────────────────────────────────────────────────────
 
 function ResumeBanner({ wordIndex, totalWords, isFresh, onResume, onDismiss }) {
@@ -1217,8 +1454,10 @@ export default function SpeedReader() {
   const [showORP, setShowORP] = useState(() => loadSettings().showORP);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [uploadTab, setUploadTab] = useState("file"); // 'file' | 'paste'
+  const [uploadTab, setUploadTab] = useState("file"); // 'file' | 'paste' | 'url'
   const [pasteText, setPasteText] = useState("");
+  const [urlInput, setUrlInput] = useState("");
+  const [urlLoading, setUrlLoading] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
   const [showKeyboardHints, setShowKeyboardHints] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1234,10 +1473,18 @@ export default function SpeedReader() {
   // Named pins (user bookmarks)
   const [pins, setPins] = useState([]);
 
+  // Recent documents
+  const [recentDocs, setRecentDocs] = useState(() => loadRecentDocs());
+
+  // Auto-hide controls
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const inactivityTimerRef = useRef(null);
+
   const timeoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const currentFileRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const currentWordRef = useRef(null);
 
   // ── Playback engine (recursive setTimeout for smart pauses) ──────────────
 
@@ -1299,6 +1546,7 @@ export default function SpeedReader() {
     setPins([]);
     setTutorialActive(false);
     currentFileRef.current = null;
+    setRecentDocs(loadRecentDocs());
   }, []);
 
   // ── Auto-save bookmark (debounced) ─────────────────────────────────────────
@@ -1317,6 +1565,71 @@ export default function SpeedReader() {
   useEffect(() => {
     saveSettings({ wpm, chunkSize, showORP, marginPercent, pauseScale, spacingThreshold, filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers });
   }, [wpm, chunkSize, showORP, marginPercent, pauseScale, spacingThreshold, filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers]);
+
+  // ── Auto-hide controls ──────────────────────────────────────────────────
+
+  const handleActivity = useCallback(() => {
+    setControlsVisible(true);
+    clearTimeout(inactivityTimerRef.current);
+    if (isPlaying && viewMode === "rsvp") {
+      inactivityTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+    }
+  }, [isPlaying, viewMode]);
+
+  useEffect(() => {
+    if (!isPlaying || viewMode !== "rsvp") {
+      setControlsVisible(true);
+      clearTimeout(inactivityTimerRef.current);
+    } else {
+      // Start hide timer when playback begins
+      inactivityTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+    }
+    return () => clearTimeout(inactivityTimerRef.current);
+  }, [isPlaying, viewMode]);
+
+  // ── Auto-save recent doc progress ─────────────────────────────────────
+
+  useEffect(() => {
+    if (!contentHash || words.length === 0 || currentIndex === 0) return;
+    const progressPercent = Math.round((currentIndex / words.length) * 100);
+    updateRecentDocProgress(contentHash, progressPercent);
+  }, [contentHash, currentIndex, words.length]);
+
+  // ── Paragraphs for text view ──────────────────────────────────────────
+
+  const paragraphs = useMemo(() => {
+    if (!rawText) return [];
+    const filterOpts = {
+      inlineCitations: filterCitations,
+      parentheticalCitations: filterCitations,
+      referenceSections: filterReferenceSections,
+      captions: filterCaptions,
+      pageNumbers: filterPageNumbers,
+    };
+    const cleaned = cleanText(rawText, filterOpts);
+    const parts = cleaned.split(/\n\n+/);
+    const result = [];
+    let wordOffset = 0;
+    for (const part of parts) {
+      const partWords = filterTokens(tokenize(part), { inlineCitations: filterCitations });
+      if (partWords.length === 0) continue;
+      result.push({
+        startIndex: wordOffset,
+        endIndex: wordOffset + partWords.length - 1,
+        words: partWords,
+      });
+      wordOffset += partWords.length;
+    }
+    return result;
+  }, [rawText, filterCitations, filterReferenceSections, filterCaptions, filterPageNumbers]);
+
+  // ── Auto-scroll in text view ──────────────────────────────────────────
+
+  useEffect(() => {
+    if (viewMode === "text" && currentWordRef.current?.scrollIntoView) {
+      currentWordRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [currentIndex, viewMode]);
 
   // ── Named pins ──────────────────────────────────────────────────────────
 
@@ -1382,9 +1695,24 @@ export default function SpeedReader() {
       setContentHash(hash);
 
       const isPDF = file.type === "application/pdf" || file.name.endsWith(".pdf");
+      const isEPUB = file.name.endsWith(".epub");
 
       let tokenizedWords = [];
-      if (isPDF) {
+      if (isEPUB) {
+        try {
+          const result = await extractWithEpub(file);
+          if (!result.text || result.text.trim().length < 20) throw new Error("Empty extraction");
+          setRawText(result.text);
+          tokenizedWords = applyFilters(result.text);
+          setWords(tokenizedWords);
+          setPageBreaks(result.pageBreaks);
+          setTocEntries(result.tocEntries);
+        } catch (err) {
+          console.error("EPUB extraction failed:", err);
+          setUploadError("Could not extract text from this EPUB. Try a different file.");
+          return;
+        }
+      } else if (isPDF) {
         try {
           currentFileRef.current = file;
           const { text, pageBreaks: pb, pdfDoc: doc } = await extractWithPDFJS(
@@ -1418,6 +1746,20 @@ export default function SpeedReader() {
           return;
         }
       }
+
+      // Save to recent docs
+      const fileType = isEPUB ? "epub" : isPDF ? "pdf" : "txt";
+      saveRecentDoc({
+        id: hash,
+        title: file.name,
+        fileType,
+        wordCount: tokenizedWords.length,
+        progressPercent: 0,
+        lastOpenedAt: Date.now(),
+        pasteContent: null,
+        url: null,
+      });
+      setRecentDocs(loadRecentDocs());
 
       // Check for existing bookmark
       const bookmark = loadBookmark(hash);
@@ -1499,6 +1841,19 @@ export default function SpeedReader() {
     const tokenizedWords = applyFilters(pasteText);
     setWords(tokenizedWords);
 
+    // Save to recent docs (store paste content if < 50KB)
+    saveRecentDoc({
+      id: hash,
+      title: pasteText.slice(0, 60).replace(/\n/g, " ") + (pasteText.length > 60 ? "…" : ""),
+      fileType: "paste",
+      wordCount: tokenizedWords.length,
+      progressPercent: 0,
+      lastOpenedAt: Date.now(),
+      pasteContent: pasteText.length <= 51200 ? pasteText : null,
+      url: null,
+    });
+    setRecentDocs(loadRecentDocs());
+
     // Check for existing bookmark
     const bookmark = loadBookmark(hash);
     if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
@@ -1512,6 +1867,60 @@ export default function SpeedReader() {
     // Load named pins
     setPins(loadPins(hash));
   }, [pasteText, applyFilters]);
+
+  // ── Start from URL ─────────────────────────────────────────────────────────
+
+  const startFromURL = useCallback(async () => {
+    if (!urlInput.trim()) {
+      setUploadError("Enter a URL first.");
+      return;
+    }
+    setUrlLoading(true);
+    setUploadError("");
+    try {
+      const { title, text } = await fetchAndExtractURL(urlInput);
+      setIsPlaying(false);
+      setCurrentIndex(0);
+      setFileName(title);
+      setPdfDoc(null);
+      setPageBreaks([]);
+      setTocEntries([]);
+      setViewMode("rsvp");
+      setPendingResume(null);
+      setPins([]);
+      currentFileRef.current = null;
+
+      const hash = "url:" + hashText(urlInput.trim());
+      setContentHash(hash);
+      setRawText(text);
+      const tokenizedWords = applyFilters(text);
+      setWords(tokenizedWords);
+
+      saveRecentDoc({
+        id: hash,
+        title,
+        fileType: "url",
+        wordCount: tokenizedWords.length,
+        progressPercent: 0,
+        lastOpenedAt: Date.now(),
+        pasteContent: null,
+        url: urlInput.trim(),
+      });
+      setRecentDocs(loadRecentDocs());
+
+      const bookmark = loadBookmark(hash);
+      if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
+        const drift = Math.abs(bookmark.wordCount - tokenizedWords.length) / bookmark.wordCount;
+        setPendingResume({ wordIndex: bookmark.wordIndex, isFresh: drift <= 0.05 });
+      }
+      setPins(loadPins(hash));
+    } catch (err) {
+      console.error("URL extraction failed:", err);
+      setUploadError(err.message || "Could not extract article from this URL.");
+    } finally {
+      setUrlLoading(false);
+    }
+  }, [urlInput, applyFilters]);
 
   // ── Start demo ──────────────────────────────────────────────────────────────
 
@@ -1546,6 +1955,7 @@ export default function SpeedReader() {
     const handler = (e) => {
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      handleActivity();
 
       switch (e.key) {
         case " ":
@@ -1614,7 +2024,7 @@ export default function SpeedReader() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [words.length, togglePlay, restart, pdfDoc, pendingResume, addPin]);
+  }, [words.length, togglePlay, restart, pdfDoc, pendingResume, addPin, handleActivity]);
 
   // ── Derived values ────────────────────────────────────────────────────────
 
@@ -1769,11 +2179,15 @@ export default function SpeedReader() {
               marginBottom: 24,
             }}
           >
-            {["file", "paste"].map((tab) => (
+            {[
+              { key: "file", label: "File" },
+              { key: "paste", label: "Paste text" },
+              { key: "url", label: "URL" },
+            ].map(({ key, label }) => (
               <button
-                key={tab}
+                key={key}
                 onClick={() => {
-                  setUploadTab(tab);
+                  setUploadTab(key);
                   setUploadError("");
                 }}
                 style={{
@@ -1781,19 +2195,18 @@ export default function SpeedReader() {
                   padding: "10px 0",
                   background: "transparent",
                   border: "none",
-                  borderBottom: uploadTab === tab
+                  borderBottom: uploadTab === key
                     ? `2px solid ${THEME.accent}`
                     : "2px solid transparent",
-                  color: uploadTab === tab ? THEME.accent : THEME.textDim,
+                  color: uploadTab === key ? THEME.accent : THEME.textDim,
                   fontFamily: FONTS.body,
                   fontSize: 13,
                   cursor: "pointer",
-                  textTransform: "capitalize",
                   transition: "all 0.15s",
                   marginBottom: -1,
                 }}
               >
-                {tab === "file" ? "File" : "Paste text"}
+                {label}
               </button>
             ))}
           </div>
@@ -1805,8 +2218,8 @@ export default function SpeedReader() {
                 onClick={() => fileInputRef.current?.click()}
                 style={{
                   border: `2px dashed ${isDragging ? THEME.accent : THEME.border}`,
-                  borderRadius: 16,
-                  padding: "56px 40px",
+                  borderRadius: 20,
+                  padding: "64px 48px",
                   cursor: "pointer",
                   transition: "all 0.3s",
                   background: isDragging ? THEME.accentDim : "transparent",
@@ -1830,7 +2243,7 @@ export default function SpeedReader() {
                     margin: 0,
                   }}
                 >
-                  Drop a PDF or text file here
+                  Drop a PDF, EPUB, or text file here
                   <br />
                   <span style={{ fontSize: 12, opacity: 0.6 }}>
                     or click to browse
@@ -1840,7 +2253,7 @@ export default function SpeedReader() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.txt,.md,.html"
+                accept=".pdf,.txt,.md,.html,.epub"
                 onChange={handleFile}
                 style={{ display: "none" }}
               />
@@ -1857,6 +2270,7 @@ export default function SpeedReader() {
                 }}
               >
                 <span>PDF</span>
+                <span>EPUB</span>
                 <span>TXT</span>
                 <span>MD</span>
               </div>
@@ -1905,8 +2319,160 @@ export default function SpeedReader() {
               </button>
             </div>
           )}
+
+          {/* URL tab */}
+          {uploadTab === "url" && (
+            <div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  type="text"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") startFromURL(); }}
+                  placeholder="https://example.com/article"
+                  style={{
+                    flex: 1,
+                    background: THEME.surface,
+                    border: `1px solid ${THEME.border}`,
+                    borderRadius: 10,
+                    padding: "12px 16px",
+                    color: THEME.text,
+                    fontFamily: FONTS.body,
+                    fontSize: 14,
+                    outline: "none",
+                  }}
+                />
+              </div>
+              <button
+                onClick={startFromURL}
+                disabled={urlLoading}
+                style={{
+                  width: "100%",
+                  padding: "12px 0",
+                  background: urlLoading ? THEME.textDim : THEME.accent,
+                  border: "none",
+                  borderRadius: 10,
+                  color: "#fff",
+                  fontFamily: FONTS.body,
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: urlLoading ? "wait" : "pointer",
+                  opacity: urlLoading ? 0.7 : 1,
+                }}
+              >
+                {urlLoading ? "Importing…" : "Import Article"}
+              </button>
+              <div style={{ marginTop: 12, fontSize: 12, color: THEME.textDim, opacity: 0.6 }}>
+                Extracts article text using Readability
+              </div>
+            </div>
+          )}
+
+          {/* Recent documents */}
+          {recentDocs.length > 0 && (
+            <div style={{ marginTop: 32, textAlign: "left" }}>
+              <div
+                style={{
+                  fontFamily: FONTS.body,
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: THEME.textDim,
+                  marginBottom: 12,
+                }}
+              >
+                Recent
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {recentDocs.slice(0, 5).map((doc) => (
+                  <RecentDocCard
+                    key={doc.id}
+                    doc={doc}
+                    onOpen={() => {
+                      if (doc.fileType === "paste" && doc.pasteContent) {
+                        setPasteText(doc.pasteContent);
+                        setUploadTab("paste");
+                        // Auto-start after a tick
+                        setTimeout(() => {
+                          // Directly start reading the paste content
+                          setIsPlaying(false);
+                          setCurrentIndex(0);
+                          setFileName(doc.title);
+                          setPdfDoc(null);
+                          setPageBreaks([]);
+                          setTocEntries([]);
+                          setViewMode("rsvp");
+                          setUploadError("");
+                          setPendingResume(null);
+                          setPins([]);
+                          const hash = doc.id;
+                          setContentHash(hash);
+                          setRawText(doc.pasteContent);
+                          const tokenizedWords = applyFilters(doc.pasteContent);
+                          setWords(tokenizedWords);
+                          saveRecentDoc({ ...doc, lastOpenedAt: Date.now() });
+                          setRecentDocs(loadRecentDocs());
+                          const bookmark = loadBookmark(hash);
+                          if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
+                            const drift = Math.abs(bookmark.wordCount - tokenizedWords.length) / bookmark.wordCount;
+                            setPendingResume({ wordIndex: bookmark.wordIndex, isFresh: drift <= 0.05 });
+                          }
+                          setPins(loadPins(hash));
+                        }, 0);
+                      } else if (doc.fileType === "url" && doc.url) {
+                        setUrlInput(doc.url);
+                        setUploadTab("url");
+                        // Auto-import
+                        setTimeout(async () => {
+                          setUrlLoading(true);
+                          try {
+                            const { title, text } = await fetchAndExtractURL(doc.url);
+                            setIsPlaying(false);
+                            setCurrentIndex(0);
+                            setFileName(title);
+                            setPdfDoc(null);
+                            setPageBreaks([]);
+                            setTocEntries([]);
+                            setViewMode("rsvp");
+                            setPendingResume(null);
+                            setPins([]);
+                            currentFileRef.current = null;
+                            const hash = doc.id;
+                            setContentHash(hash);
+                            setRawText(text);
+                            const tokenizedWords = applyFilters(text);
+                            setWords(tokenizedWords);
+                            saveRecentDoc({ ...doc, lastOpenedAt: Date.now() });
+                            setRecentDocs(loadRecentDocs());
+                            const bookmark = loadBookmark(hash);
+                            if (bookmark && bookmark.wordIndex > 0 && bookmark.wordIndex < tokenizedWords.length) {
+                              const drift = Math.abs(bookmark.wordCount - tokenizedWords.length) / bookmark.wordCount;
+                              setPendingResume({ wordIndex: bookmark.wordIndex, isFresh: drift <= 0.05 });
+                            }
+                            setPins(loadPins(hash));
+                          } catch (err) {
+                            setUploadError(err.message || "Could not re-import URL.");
+                          } finally {
+                            setUrlLoading(false);
+                          }
+                        }, 0);
+                      } else {
+                        // File-type docs: user must re-select
+                        setUploadTab("file");
+                        fileInputRef.current?.click();
+                      }
+                    }}
+                    onRemove={() => {
+                      removeRecentDoc(doc.id);
+                      setRecentDocs(loadRecentDocs());
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        
+
         <div
           style={{
             position: "absolute",
@@ -1966,6 +2532,9 @@ export default function SpeedReader() {
 
   return (
     <div
+      onMouseMove={handleActivity}
+      onTouchStart={handleActivity}
+      className={!controlsVisible ? "reader-hide-cursor" : ""}
       style={{
         height: "100vh",
         background: THEME.bg,
@@ -2128,12 +2697,13 @@ export default function SpeedReader() {
       )}
 
       {/* Progress bar */}
-      <div data-tutorial="progress-bar" style={{ height: 2, background: THEME.border, flexShrink: 0 }}>
+      <div data-tutorial="progress-bar" style={{ height: 3, background: THEME.border, flexShrink: 0 }}>
         <div
           style={{
             height: "100%",
             width: `${progress}%`,
             background: `linear-gradient(90deg, ${THEME.accent}, ${THEME.accent}cc)`,
+            boxShadow: `0 0 6px ${THEME.accent}44`,
             transition: isPlaying ? "width 0.1s linear" : "width 0.3s ease",
           }}
         />
@@ -2166,6 +2736,9 @@ export default function SpeedReader() {
           borderBottom: `1px solid ${THEME.border}`,
           flexShrink: 0,
           gap: 12,
+          opacity: controlsVisible ? 1 : 0,
+          transition: "opacity 0.3s ease",
+          pointerEvents: controlsVisible ? "auto" : "none",
         }}
       >
         {/* Left: TOC + logo + file name */}
@@ -2277,9 +2850,17 @@ export default function SpeedReader() {
         </div>
       </div>
 
-      {/* Main content area */}
-      {viewMode === "text" ? (
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      {/* Main content area — all three views rendered, toggled via opacity */}
+      {/* Text view */}
+      <div
+        style={{
+          flex: viewMode === "text" ? 1 : undefined,
+          height: viewMode !== "text" ? 0 : undefined,
+          overflow: viewMode === "text" ? "hidden" : "hidden",
+          display: viewMode === "text" ? "flex" : "none",
+        }}
+      >
+        <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
           {/* Text content */}
           <div
             style={{
@@ -2291,69 +2872,76 @@ export default function SpeedReader() {
               width: "100%",
             }}
           >
-            <p
-              style={{
-                lineHeight: 1.8,
-                fontSize: 15,
-                color: THEME.textDim,
-                fontWeight: 300,
-                whiteSpace: "pre-wrap",
-                margin: 0,
-              }}
-            >
-              {words.map((w, i) => {
-                const pin = pins.find((p) => p.wordIndex === i);
-                return (
-                  <span
-                    key={i}
-                    style={{ position: "relative" }}
-                    {...(pin ? { "data-word-index": i } : {})}
-                  >
-                    {pin && (
+            {paragraphs.map((para, pIdx) => {
+              return (
+                <p
+                  key={pIdx}
+                  style={{
+                    lineHeight: 2.0,
+                    fontSize: 17,
+                    color: THEME.textDim,
+                    fontWeight: 400,
+                    margin: 0,
+                    marginBottom: 24,
+                  }}
+                >
+                  {para.words.map((w, wIdx) => {
+                    const globalIdx = para.startIndex + wIdx;
+                    const pin = pins.find((p) => p.wordIndex === globalIdx);
+                    const isCurrent = globalIdx === currentIndex;
+                    return (
                       <span
-                        data-testid={`pin-indicator-${i}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCurrentIndex(pin.wordIndex);
-                        }}
-                        style={{
-                          position: "absolute",
-                          left: -16,
-                          top: "0.15em",
-                          color: THEME.accent,
-                          cursor: "pointer",
-                        }}
+                        key={wIdx}
+                        ref={isCurrent ? currentWordRef : null}
+                        style={{ position: "relative" }}
+                        {...(pin ? { "data-word-index": globalIdx } : {})}
                       >
-                        <Bookmark size={10} />
+                        {pin && (
+                          <span
+                            data-testid={`pin-indicator-${globalIdx}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCurrentIndex(pin.wordIndex);
+                            }}
+                            style={{
+                              position: "absolute",
+                              left: -16,
+                              top: "0.15em",
+                              color: THEME.accent,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <Bookmark size={10} />
+                          </span>
+                        )}
+                        <span
+                          onClick={() => setCurrentIndex(globalIdx)}
+                          onDoubleClick={() => {
+                            setCurrentIndex(globalIdx);
+                            setViewMode("rsvp");
+                          }}
+                          style={{
+                            cursor: "pointer",
+                            background: isCurrent ? THEME.accentDim : "transparent",
+                            borderRadius: isCurrent ? 3 : 0,
+                            padding: isCurrent ? "1px 3px" : 0,
+                            color: isCurrent
+                              ? THEME.accent
+                              : globalIdx < currentIndex
+                              ? THEME.textDim + "66"
+                              : THEME.textDim,
+                            fontWeight: isCurrent ? 500 : 400,
+                            transition: "background 0.15s, color 0.15s",
+                          }}
+                        >
+                          {w}
+                        </span>{" "}
                       </span>
-                    )}
-                    <span
-                      onClick={() => {
-                        setCurrentIndex(i);
-                        setViewMode("rsvp");
-                      }}
-                      style={{
-                        cursor: "pointer",
-                        color:
-                          i === currentIndex
-                            ? THEME.accent
-                            : i < currentIndex
-                            ? THEME.textDim + "66"
-                            : THEME.textDim,
-                        fontWeight: i === currentIndex ? 500 : 300,
-                        transition: "color 0.15s",
-                        borderBottom:
-                          i === currentIndex
-                            ? `1px solid ${THEME.accent}`
-                            : "none",
-                      }}
-                    >
-                      {w}{" "}
-                    </span>
-                  </span>
-                );
-              })}
-            </p>
+                    );
+                  })}
+                </p>
+              );
+            })}
           </div>
 
           {/* Pins sidebar */}
@@ -2459,8 +3047,12 @@ export default function SpeedReader() {
               ))}
             </div>
           )}
+
         </div>
-      ) : viewMode === "pdf" && pdfDoc ? (
+      </div>
+
+      {/* PDF view */}
+      {viewMode === "pdf" && pdfDoc && (
         <PDFPages
           pdfDoc={pdfDoc}
           currentPageNum={currentPageNum}
@@ -2473,8 +3065,10 @@ export default function SpeedReader() {
             }
           }}
         />
-      ) : (
-        // RSVP view
+      )}
+
+      {/* RSVP view */}
+      {viewMode === "rsvp" && (
         <div
           data-tutorial="word-display"
           style={{
@@ -2530,12 +3124,16 @@ export default function SpeedReader() {
         </div>
       )}
 
-      {/* Controls bar */}
+      {/* Controls bar — hidden in text view */}
       <div
         style={{
           borderTop: `1px solid ${THEME.border}`,
           padding: "14px 16px",
           flexShrink: 0,
+          opacity: controlsVisible ? 1 : 0,
+          transition: "opacity 0.3s ease",
+          pointerEvents: controlsVisible ? "auto" : "none",
+          display: viewMode === "text" ? "none" : undefined,
         }}
       >
         <div
@@ -2688,6 +3286,8 @@ export default function SpeedReader() {
 
       {/* Global styles */}
       <style>{`
+        .reader-hide-cursor { cursor: none !important; }
+        .reader-hide-cursor * { cursor: none !important; }
         input[type="range"]::-webkit-slider-thumb {
           -webkit-appearance: none;
           width: 14px;

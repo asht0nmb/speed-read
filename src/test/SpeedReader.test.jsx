@@ -22,7 +22,7 @@ describe('SpeedReader', () => {
   describe('Upload screen', () => {
     it('renders logo text', () => {
       render(<SpeedReader />);
-      expect(screen.getByText('swift')).toBeInTheDocument();
+      expect(screen.getByText('speed')).toBeInTheDocument();
       // "read" appears in both logo and subtitle, so use getAllByText
       const readElements = screen.getAllByText(/read/);
       expect(readElements.length).toBeGreaterThanOrEqual(1);
@@ -30,7 +30,7 @@ describe('SpeedReader', () => {
 
     it('renders subtitle', () => {
       render(<SpeedReader />);
-      expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+      expect(screen.getByText(/speed reader/)).toBeInTheDocument();
     });
 
     it('renders File and Paste text tabs', () => {
@@ -41,7 +41,7 @@ describe('SpeedReader', () => {
 
     it('shows drop zone on file tab', () => {
       render(<SpeedReader />);
-      expect(screen.getByText(/Drop a PDF or text file here/)).toBeInTheDocument();
+      expect(screen.getByText(/Drop a PDF, EPUB, or text file here/)).toBeInTheDocument();
     });
 
     it('shows supported file types', () => {
@@ -167,12 +167,18 @@ describe('SpeedReader', () => {
 
     it('close button returns to upload screen', async () => {
       const user = await setupReader();
-      // Click the close (✕) button — the "New file" button
-      const closeButton = screen.getByTitle('New file');
-      await user.click(closeButton);
+      // Click the close (✕) button — triggers exit confirm dialog
+      const closeButtons = screen.getAllByTitle('New file');
+      await user.click(closeButtons[closeButtons.length - 1]);
+
+      // Confirm the exit dialog
+      await waitFor(() => {
+        expect(screen.getByText('Leave')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Leave'));
 
       await waitFor(() => {
-        expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+        expect(screen.getByText(/speed reader/)).toBeInTheDocument();
       });
     });
   });
@@ -580,12 +586,18 @@ describe('SpeedReader', () => {
       // Add a pin
       fireEvent.keyDown(window, { key: 'm' });
 
-      // Click "New file"
-      const closeButton = screen.getByTitle('New file');
-      await user.click(closeButton);
+      // Click "New file" — triggers exit confirm
+      const closeButtons = screen.getAllByTitle('New file');
+      await user.click(closeButtons[closeButtons.length - 1]);
+
+      // Confirm exit
+      await waitFor(() => {
+        expect(screen.getByText('Leave')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Leave'));
 
       await waitFor(() => {
-        expect(screen.getByText('open-source speed reader')).toBeInTheDocument();
+        expect(screen.getByText(/speed reader/)).toBeInTheDocument();
       });
     });
   });

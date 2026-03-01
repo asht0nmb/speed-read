@@ -88,6 +88,52 @@ export function loadPins(contentHash) {
   }
 }
 
+// ─── Recent documents ────────────────────────────────────────────────────────
+
+const RECENT_KEY = "swiftread:recent";
+const RECENT_MAX = 20;
+
+export function loadRecentDocs() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return [];
+    return data;
+  } catch (_) {
+    return [];
+  }
+}
+
+export function saveRecentDoc(entry) {
+  try {
+    const docs = loadRecentDocs();
+    const idx = docs.findIndex((d) => d.id === entry.id);
+    if (idx !== -1) docs.splice(idx, 1);
+    docs.unshift({ ...entry, lastOpenedAt: Date.now() });
+    if (docs.length > RECENT_MAX) docs.length = RECENT_MAX;
+    localStorage.setItem(RECENT_KEY, JSON.stringify(docs));
+  } catch (_) {}
+}
+
+export function updateRecentDocProgress(id, progressPercent) {
+  try {
+    const docs = loadRecentDocs();
+    const doc = docs.find((d) => d.id === id);
+    if (!doc) return;
+    doc.progressPercent = progressPercent;
+    doc.lastOpenedAt = Date.now();
+    localStorage.setItem(RECENT_KEY, JSON.stringify(docs));
+  } catch (_) {}
+}
+
+export function removeRecentDoc(id) {
+  try {
+    const docs = loadRecentDocs().filter((d) => d.id !== id);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(docs));
+  } catch (_) {}
+}
+
 // ─── Settings persistence ────────────────────────────────────────────────────
 
 const DEFAULTS = { wpm: 300, chunkSize: 1, showORP: true, marginPercent: 0.08, pauseScale: 1.0, spacingThreshold: 1.2, filterCitations: true, filterReferenceSections: true, filterCaptions: false, filterPageNumbers: false };
