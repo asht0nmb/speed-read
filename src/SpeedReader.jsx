@@ -32,6 +32,286 @@ import {
   Settings
 } from "lucide-react";
 
+// ─── Demo text ────────────────────────────────────────────────────────────────
+
+const DEMO_TEXT = `Speed reading is the art of absorbing written information faster than the average reading pace of about 250 words per minute. The technique you are experiencing right now is called Rapid Serial Visual Presentation, or RSVP. Instead of scanning your eyes across a page, words are flashed one at a time at a fixed point on screen.
+
+Your eyes naturally land on a specific letter in each word called the Optimal Recognition Point. This app highlights that letter in orange so your brain can lock onto it instantly. Research shows that much of the time spent reading is actually consumed by eye movements called saccades, the tiny jumps your gaze makes between words. By eliminating saccades entirely, RSVP lets you process text significantly faster.
+
+Most people find they can comfortably read at 300 to 400 words per minute with RSVP after just a few minutes of practice. Some experienced speed readers push well beyond 600 words per minute while maintaining good comprehension. The key is to relax your inner voice and let the words flow naturally without subvocalizing every syllable.
+
+This demo text is designed to give you a feel for the reader controls. Try adjusting the speed slider below, skip forward and backward with the arrow buttons, or drop a pin to bookmark this spot. You can switch to full text view to see all the words at once and click any word to jump directly to it.
+
+Speed reading works especially well for reviewing familiar material, scanning articles for key ideas, and powering through dense technical documents. It pairs nicely with traditional careful reading, which remains essential for poetry, legal contracts, and complex arguments that reward slow deliberation. Think of RSVP as another tool in your reading toolkit, perfect for when you need to cover ground quickly.`;
+
+const DEMO_TOC = [
+  { title: "What is Speed Reading?", pageNum: 1, wordIndex: 0, depth: 0 },
+  { title: "The Optimal Recognition Point", pageNum: 1, wordIndex: 53, depth: 0 },
+  { title: "Getting Started with RSVP", pageNum: 1, wordIndex: 117, depth: 0 },
+];
+
+// ─── Tutorial steps ───────────────────────────────────────────────────────────
+
+const TUTORIAL_STEPS = [
+  { target: "word-display", headline: "RSVP Reading", body: "Words flash here one at a time at your chosen speed. Your eyes stay fixed at center \u2014 no scanning needed. The orange letter is the Optimal Recognition Point (ORP), the spot your brain locks onto fastest.", shortcut: null, placement: "below" },
+  { target: "play-button", headline: "Play & Pause", body: "Start and stop playback.", shortcut: "Space", placement: "above" },
+  { target: "back-forward", headline: "Skip Back & Forward", body: "Jump 10 words at a time.", shortcut: "\u2190 \u2192", placement: "above" },
+  { target: "scrubber", headline: "Scrubber", body: "Drag to jump anywhere in the text.", shortcut: null, placement: "above" },
+  { target: "progress-bar", headline: "Progress", body: null, label: "Tracks your reading progress.", shortcut: null, placement: "below" },
+  { target: "wpm-slider", headline: "Reading Speed", body: "Set words-per-minute. Average is ~250 WPM \u2014 most people can push to 400\u2013500 with practice.", shortcut: "↑ ↓", placement: "above" },
+  { target: "margins-slider", headline: "PDF Margins", body: null, label: "For PDFs, adjust margin cropping to exclude headers/footers.", shortcut: null, placement: "above" },
+  { target: "orp-toggle", headline: "ORP Highlight", body: "Toggle the orange focus letter on or off. The ORP is the optimal point in each word for your eye to fixate.", shortcut: "O", placement: "above" },
+  { target: "pin-button", headline: "Pins", body: "Drop a pin at your current position to bookmark it. Pins appear in text view with a sidebar listing all your bookmarks \u2014 click any pin to jump back to it.", shortcut: "M", placement: "above" },
+  { target: "toc-button", headline: "Table of Contents", body: "For uploaded PDFs, this opens a table of contents panel. Click any heading to jump directly to that section.", shortcut: null, placement: "below" },
+  { target: "view-modes", headline: "View Modes", body: "Switch between RSVP flash mode and full scrollable text. In text view, click any word to jump to it. PDF view appears when a PDF is loaded.", shortcut: "T", placement: "below" },
+  { target: "settings-button", headline: "Settings", body: "Fine-tune chunk size (read multiple words at once), pause behavior at punctuation, and text filtering options.", shortcut: "S", placement: "below" },
+  { target: "keyboard-hints", headline: "All Shortcuts", body: null, label: "See all keyboard shortcuts.", shortcut: "?", placement: "below" },
+  { target: "close-button", headline: "New File", body: null, label: "Close and return to upload.", shortcut: null, placement: "below" },
+];
+
+// ─── Tutorial Overlay ─────────────────────────────────────────────────────────
+
+function TutorialOverlay({ step, totalSteps, onNext, onBack, onSkip }) {
+  const [rect, setRect] = useState(null);
+  const stepDef = TUTORIAL_STEPS[step];
+  const isHighlightOnly = !stepDef.body;
+
+  useEffect(() => {
+    const measure = () => {
+      const el = document.querySelector(`[data-tutorial="${stepDef.target}"]`);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [step, stepDef.target]);
+
+  if (!rect) return null;
+
+  const pad = 8;
+  const cutout = {
+    x: rect.left - pad,
+    y: rect.top - pad,
+    w: rect.width + pad * 2,
+    h: rect.height + pad * 2,
+    rx: 10,
+  };
+
+  // Tooltip positioning
+  const tooltipWidth = 320;
+  const gap = 12;
+  let tooltipStyle = {
+    position: "fixed",
+    zIndex: 62,
+    width: tooltipWidth,
+    maxWidth: "calc(100vw - 32px)",
+  };
+
+  const clampLeft = Math.max(16, Math.min(rect.left + rect.width / 2 - tooltipWidth / 2, window.innerWidth - tooltipWidth - 16));
+
+  if (stepDef.placement === "above") {
+    tooltipStyle.bottom = `${window.innerHeight - rect.top + gap}px`;
+    tooltipStyle.left = `${clampLeft}px`;
+  } else {
+    const proposedTop = rect.top + rect.height + gap;
+    // If tooltip would go off-screen, center it within the target instead
+    if (proposedTop + 200 > window.innerHeight) {
+      tooltipStyle.top = `${Math.max(16, rect.top + rect.height / 2 - 100)}px`;
+    } else {
+      tooltipStyle.top = `${proposedTop}px`;
+    }
+    tooltipStyle.left = `${clampLeft}px`;
+  }
+
+  return (
+    <>
+      {/* SVG mask scrim */}
+      <svg
+        style={{ position: "fixed", inset: 0, zIndex: 60, pointerEvents: "none", width: "100%", height: "100%" }}
+      >
+        <defs>
+          <mask id="tutorial-mask">
+            <rect x="0" y="0" width="100%" height="100%" fill="white" />
+            <rect
+              x={cutout.x}
+              y={cutout.y}
+              width={cutout.w}
+              height={cutout.h}
+              rx={cutout.rx}
+              fill="black"
+            />
+          </mask>
+        </defs>
+        <rect
+          x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)"
+          mask="url(#tutorial-mask)"
+          style={{ pointerEvents: "auto" }}
+          onClick={onNext}
+        />
+      </svg>
+
+      {/* Highlight border */}
+      <div
+        style={{
+          position: "fixed",
+          left: cutout.x,
+          top: cutout.y,
+          width: cutout.w,
+          height: cutout.h,
+          borderRadius: cutout.rx,
+          border: `2px solid ${THEME.accent}`,
+          boxShadow: `0 0 20px ${THEME.accent}44`,
+          zIndex: 61,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Tooltip */}
+      <div
+        style={{
+          ...tooltipStyle,
+          background: THEME.surface,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 12,
+          padding: isHighlightOnly ? "14px 18px" : "18px 22px",
+          boxShadow: `0 8px 32px rgba(0,0,0,0.4)`,
+          pointerEvents: "auto",
+        }}
+      >
+        {/* Step counter */}
+        <div
+          style={{
+            fontFamily: FONTS.body,
+            fontSize: 11,
+            color: THEME.textDim,
+            marginBottom: 6,
+            letterSpacing: "0.05em",
+          }}
+        >
+          {step + 1} / {totalSteps}
+        </div>
+
+        {/* Headline */}
+        <div
+          style={{
+            fontFamily: FONTS.display,
+            fontSize: isHighlightOnly ? 14 : 16,
+            color: THEME.text,
+            marginBottom: isHighlightOnly ? 4 : 8,
+            fontWeight: 500,
+          }}
+        >
+          {stepDef.headline}
+        </div>
+
+        {/* Body or label */}
+        {stepDef.body && (
+          <div
+            style={{
+              fontFamily: FONTS.body,
+              fontSize: 13,
+              color: THEME.textDim,
+              lineHeight: 1.6,
+              marginBottom: 10,
+            }}
+          >
+            {stepDef.body}
+          </div>
+        )}
+        {isHighlightOnly && stepDef.label && (
+          <div
+            style={{
+              fontFamily: FONTS.body,
+              fontSize: 12,
+              color: THEME.textDim,
+              marginBottom: 8,
+            }}
+          >
+            {stepDef.label}
+          </div>
+        )}
+
+        {/* Keyboard shortcut badge */}
+        {stepDef.shortcut && (
+          <div style={{ marginBottom: 10 }}>
+            <kbd
+              style={{
+                fontFamily: FONTS.display,
+                fontSize: 11,
+                color: THEME.accent,
+                background: THEME.accentDim,
+                border: `1px solid ${THEME.accent}44`,
+                borderRadius: 4,
+                padding: "2px 8px",
+              }}
+            >
+              {stepDef.shortcut}
+            </kbd>
+          </div>
+        )}
+
+        {/* Navigation buttons */}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+          <button
+            onClick={onSkip}
+            style={{
+              background: "none",
+              border: "none",
+              color: THEME.textDim,
+              fontFamily: FONTS.body,
+              fontSize: 12,
+              cursor: "pointer",
+              padding: "4px 8px",
+            }}
+          >
+            Skip
+          </button>
+          {step > 0 && (
+            <button
+              onClick={onBack}
+              style={{
+                background: "transparent",
+                border: `1px solid ${THEME.border}`,
+                borderRadius: 6,
+                color: THEME.textDim,
+                fontFamily: FONTS.body,
+                fontSize: 12,
+                cursor: "pointer",
+                padding: "5px 14px",
+              }}
+            >
+              Back
+            </button>
+          )}
+          <button
+            onClick={onNext}
+            style={{
+              background: THEME.accent,
+              border: "none",
+              borderRadius: 6,
+              color: "#fff",
+              fontFamily: FONTS.body,
+              fontSize: 12,
+              cursor: "pointer",
+              padding: "5px 14px",
+              fontWeight: 500,
+            }}
+          >
+            {step === totalSteps - 1 ? "Done" : "Next"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 export function WordDisplay({ word, showORP, upcomingText }) {
@@ -381,7 +661,7 @@ function KeyboardHints({ onClose }) {
   const shortcuts = [
     ["Space", "Play / Pause"],
     ["← →", "Jump ±10 words"],
-    ["[ ]", "Speed ±25 WPM"],
+    ["↑ ↓", "Speed ±25 WPM"],
     ["R", "Restart"],
     ["T", "Toggle full text"],
     ["P", "Toggle PDF view"],
@@ -583,9 +863,12 @@ export function SettingsModal({
           step={2}
           displayValue={`${chunkSize} word${chunkSize > 1 ? "s" : ""}`}
         />
-        <div style={{ height: 8 }} />
+        <div style={{ fontFamily: FONTS.body, fontSize: 10, color: THEME.textDim, opacity: 0.6, marginTop: 2 }}>
+          Words shown at once
+        </div>
+        <div style={{ height: 12 }} />
         <Slider
-          label="Pause"
+          label="Pause on punctuation"
           value={pauseScale}
           onChange={onPauseScaleChange}
           min={1.0}
@@ -593,6 +876,9 @@ export function SettingsModal({
           step={0.1}
           displayValue={`${pauseScale.toFixed(1)}×`}
         />
+        <div style={{ fontFamily: FONTS.body, fontSize: 10, color: THEME.textDim, opacity: 0.6, marginTop: 2 }}>
+          Extra delay after commas, periods, etc.
+        </div>
 
         {hasPDF && (
           <>
@@ -937,6 +1223,9 @@ export default function SpeedReader() {
   const [showKeyboardHints, setShowKeyboardHints] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMarginPreview, setShowMarginPreview] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [tutorialActive, setTutorialActive] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
 
   // Persistence
   const [contentHash, setContentHash] = useState(null);
@@ -995,6 +1284,22 @@ export default function SpeedReader() {
     if (contentHash) clearBookmark(contentHash);
     setPendingResume(null);
   }, [contentHash]);
+
+  const exitToHome = useCallback(() => {
+    setWords([]);
+    setRawText("");
+    setFileName("");
+    setCurrentIndex(0);
+    setIsPlaying(false);
+    setPdfDoc(null);
+    setPageBreaks([]);
+    setTocEntries([]);
+    setContentHash(null);
+    setPendingResume(null);
+    setPins([]);
+    setTutorialActive(false);
+    currentFileRef.current = null;
+  }, []);
 
   // ── Auto-save bookmark (debounced) ─────────────────────────────────────────
 
@@ -1208,6 +1513,33 @@ export default function SpeedReader() {
     setPins(loadPins(hash));
   }, [pasteText, applyFilters]);
 
+  // ── Start demo ──────────────────────────────────────────────────────────────
+
+  const startDemo = useCallback(() => {
+    setIsPlaying(false);
+    setCurrentIndex(0);
+    setFileName("Demo");
+    setPdfDoc(null);
+    setPageBreaks([]);
+    setViewMode("rsvp");
+    setUploadError("");
+    setPendingResume(null);
+    setPins([]);
+    setContentHash(null);
+
+    setRawText(DEMO_TEXT);
+    const tokenizedWords = applyFilters(DEMO_TEXT);
+    setWords(tokenizedWords);
+
+    // Fake TOC so the TOC button appears
+    setTocEntries(DEMO_TOC);
+    // Make Margins slider appear
+    currentFileRef.current = true;
+
+    setTutorialStep(0);
+    setTutorialActive(true);
+  }, [applyFilters]);
+
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -1228,11 +1560,11 @@ export default function SpeedReader() {
           e.preventDefault();
           setCurrentIndex((i) => Math.min(words.length - 1, i + 10));
           break;
-        case "[":
-          setWpm((w) => Math.max(100, w - 25));
-          break;
-        case "]":
+        case "ArrowUp":
           setWpm((w) => Math.min(1000, w + 25));
+          break;
+        case "ArrowDown":
+          setWpm((w) => Math.max(100, w - 25));
           break;
         case "r":
         case "R":
@@ -1273,6 +1605,7 @@ export default function SpeedReader() {
           setShowKeyboardHints(false);
           setShowSettings(false);
           setShowMarginPreview(false);
+          setTutorialActive(false);
           setPendingResume(null);
           break;
         default:
@@ -1381,6 +1714,33 @@ export default function SpeedReader() {
             </a>{" "}
             speed reader
           </p>
+
+          {/* Try a demo */}
+          <button
+            onClick={startDemo}
+            style={{
+              background: "transparent",
+              border: `1px solid ${THEME.border}`,
+              borderRadius: 8,
+              color: THEME.textDim,
+              fontFamily: FONTS.body,
+              fontSize: 13,
+              cursor: "pointer",
+              padding: "8px 20px",
+              marginBottom: 28,
+              transition: "all 0.15s",
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.borderColor = THEME.accent;
+              e.currentTarget.style.color = THEME.accent;
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.borderColor = THEME.border;
+              e.currentTarget.style.color = THEME.textDim;
+            }}
+          >
+            Try a demo
+          </button>
 
           {/* Error banner */}
           {uploadError && (
@@ -1631,6 +1991,91 @@ export default function SpeedReader() {
       {showKeyboardHints && (
         <KeyboardHints onClose={() => setShowKeyboardHints(false)} />
       )}
+      {showExitConfirm && (
+        <>
+          <div
+            onClick={() => setShowExitConfirm(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.5)",
+              zIndex: 40,
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%,-50%)",
+              background: THEME.surface,
+              border: `1px solid ${THEME.border}`,
+              borderRadius: 12,
+              padding: "28px 32px",
+              zIndex: 50,
+              width: 300,
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: FONTS.display,
+                fontSize: 16,
+                color: THEME.text,
+                marginBottom: contentHash && !contentHash.startsWith("paste:") ? 8 : 24,
+              }}
+            >
+              Leave reading session?
+            </div>
+            {contentHash && !contentHash.startsWith("paste:") && (
+              <div
+                style={{
+                  fontFamily: FONTS.body,
+                  fontSize: 13,
+                  color: THEME.textDim,
+                  marginBottom: 24,
+                  lineHeight: 1.5,
+                }}
+              >
+                Your progress is saved and will resume next time.
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${THEME.border}`,
+                  borderRadius: 8,
+                  color: THEME.textDim,
+                  fontFamily: FONTS.body,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  padding: "8px 20px",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowExitConfirm(false); exitToHome(); }}
+                style={{
+                  background: THEME.accent,
+                  border: "none",
+                  borderRadius: 8,
+                  color: "#fff",
+                  fontFamily: FONTS.body,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  padding: "8px 20px",
+                  fontWeight: 500,
+                }}
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </>
+      )}
       {showSettings && (
         <SettingsModal
           chunkSize={chunkSize}
@@ -1666,9 +2111,24 @@ export default function SpeedReader() {
           onClose={() => setShowMarginPreview(false)}
         />
       )}
+      {tutorialActive && (
+        <TutorialOverlay
+          step={tutorialStep}
+          totalSteps={TUTORIAL_STEPS.length}
+          onNext={() => {
+            if (tutorialStep < TUTORIAL_STEPS.length - 1) {
+              setTutorialStep(tutorialStep + 1);
+            } else {
+              setTutorialActive(false);
+            }
+          }}
+          onBack={() => setTutorialStep(Math.max(0, tutorialStep - 1))}
+          onSkip={() => setTutorialActive(false)}
+        />
+      )}
 
       {/* Progress bar */}
-      <div style={{ height: 2, background: THEME.border, flexShrink: 0 }}>
+      <div data-tutorial="progress-bar" style={{ height: 2, background: THEME.border, flexShrink: 0 }}>
         <div
           style={{
             height: "100%",
@@ -1718,19 +2178,25 @@ export default function SpeedReader() {
           }}
         >
           {tocEntries.length > 0 && (
-            <IconButton
-              onClick={() => {
-                setIsPlaying(false);
-                setShowTOC(true);
-              }}
-              active={showTOC}
-              title="Table of contents"
-              size={30}
-            >
-              <Menu size={14} />
-            </IconButton>
+            <span data-tutorial="toc-button">
+              <IconButton
+                onClick={() => {
+                  setIsPlaying(false);
+                  setShowTOC(true);
+                }}
+                active={showTOC}
+                title="Table of contents"
+                size={30}
+              >
+                <Menu size={14} />
+              </IconButton>
+            </span>
           )}
-          <span style={{ fontFamily: FONTS.display, fontSize: 13 }}>
+          <span
+            onClick={() => setShowExitConfirm(true)}
+            style={{ fontFamily: FONTS.display, fontSize: 13, cursor: "pointer" }}
+            title="New file"
+          >
             <span style={{ color: THEME.accent }}>speed</span>read
           </span>
           <span style={{ color: THEME.textDim, fontSize: 12 }}>·</span>
@@ -1750,20 +2216,22 @@ export default function SpeedReader() {
         {/* Right: view mode tabs + actions */}
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
           {/* View mode buttons */}
-          <IconButton
-            onClick={() => setViewMode("rsvp")}
-            active={viewMode === "rsvp"}
-            title="RSVP view"
-          >
-            <Zap size={16} />
-          </IconButton>
-          <IconButton
-            onClick={() => setViewMode("text")}
-            active={viewMode === "text"}
-            title="Full text (T)"
-          >
-            <AlignLeft size={16} />
-          </IconButton>
+          <span data-tutorial="view-modes" style={{ display: "flex", gap: 6 }}>
+            <IconButton
+              onClick={() => setViewMode("rsvp")}
+              active={viewMode === "rsvp"}
+              title="RSVP view"
+            >
+              <Zap size={16} />
+            </IconButton>
+            <IconButton
+              onClick={() => setViewMode("text")}
+              active={viewMode === "text"}
+              title="Full text (T)"
+            >
+              <AlignLeft size={16} />
+            </IconButton>
+          </span>
           {pdfDoc && (
             <IconButton
               onClick={() => setViewMode("pdf")}
@@ -1782,37 +2250,30 @@ export default function SpeedReader() {
             }}
           />
 
-          <IconButton
-            onClick={() => setShowSettings(true)}
-            title="Settings (S)"
-          >
-            <Settings size={16} />
-          </IconButton>
-          <IconButton
-            onClick={() => setShowKeyboardHints(true)}
-            title="Keyboard shortcuts (?)"
-          >
-            <Keyboard size={16} />
-          </IconButton>
-          <IconButton
-            onClick={() => {
-              setWords([]);
-              setRawText("");
-              setFileName("");
-              setCurrentIndex(0);
-              setIsPlaying(false);
-              setPdfDoc(null);
-              setPageBreaks([]);
-              setTocEntries([]);
-              setContentHash(null);
-              setPendingResume(null);
-              setPins([]);
-              currentFileRef.current = null;
-            }}
-            title="New file"
-          >
-            <X size={16} />
-          </IconButton>
+          <span data-tutorial="settings-button">
+            <IconButton
+              onClick={() => setShowSettings(true)}
+              title="Settings (S)"
+            >
+              <Settings size={16} />
+            </IconButton>
+          </span>
+          <span data-tutorial="keyboard-hints">
+            <IconButton
+              onClick={() => setShowKeyboardHints(true)}
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard size={16} />
+            </IconButton>
+          </span>
+          <span data-tutorial="close-button">
+            <IconButton
+              onClick={() => setShowExitConfirm(true)}
+              title="New file"
+            >
+              <X size={16} />
+            </IconButton>
+          </span>
         </div>
       </div>
 
@@ -2015,6 +2476,7 @@ export default function SpeedReader() {
       ) : (
         // RSVP view
         <div
+          data-tutorial="word-display"
           style={{
             flex: 1,
             display: "flex",
@@ -2094,44 +2556,50 @@ export default function SpeedReader() {
               gap: 10,
             }}
           >
-            <IconButton
-              onClick={addPin}
-              title="Add pin (M)"
-              active={pins.some((p) => p.wordIndex === currentIndex)}
-            >
-              <Bookmark size={16} />
-            </IconButton>
-            <IconButton
-              onClick={() =>
-                setCurrentIndex((i) => Math.max(0, i - 10))
-              }
-              title="Back 10 words (←)"
-            >
-              <ChevronLeft size={16} />
-            </IconButton>
+            <span data-tutorial="pin-button">
+              <IconButton
+                onClick={addPin}
+                title="Add pin (M)"
+                active={pins.some((p) => p.wordIndex === currentIndex)}
+              >
+                <Bookmark size={16} />
+              </IconButton>
+            </span>
+            <span data-tutorial="back-forward">
+              <IconButton
+                onClick={() =>
+                  setCurrentIndex((i) => Math.max(0, i - 10))
+                }
+                title="Back 10 words (←)"
+              >
+                <ChevronLeft size={16} />
+              </IconButton>
+            </span>
 
-            <button
-              onClick={togglePlay}
-              title={isPlaying ? "Pause (Space)" : "Play (Space)"}
-              style={{
-                width: 52,
-                height: 52,
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: THEME.accent,
-                border: "none",
-                color: "#fff",
-                fontSize: 18,
-                cursor: "pointer",
-                boxShadow: `0 0 24px ${THEME.accent}44`,
-                transition: "transform 0.15s",
-                flexShrink: 0,
-              }}
-            >
-              {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-            </button>
+            <span data-tutorial="play-button">
+              <button
+                onClick={togglePlay}
+                title={isPlaying ? "Pause (Space)" : "Play (Space)"}
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: THEME.accent,
+                  border: "none",
+                  color: "#fff",
+                  fontSize: 18,
+                  cursor: "pointer",
+                  boxShadow: `0 0 24px ${THEME.accent}44`,
+                  transition: "transform 0.15s",
+                  flexShrink: 0,
+                }}
+              >
+                {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+              </button>
+            </span>
 
             <IconButton
               onClick={() =>
@@ -2143,35 +2611,39 @@ export default function SpeedReader() {
             >
               <ChevronRight size={16} />
             </IconButton>
-            <IconButton
-              onClick={() => setShowORP((v) => !v)}
-              active={showORP}
-              title="Toggle ORP highlight (O)"
-            >
-              <Eye size={16} />
-            </IconButton>
+            <span data-tutorial="orp-toggle">
+              <IconButton
+                onClick={() => setShowORP((v) => !v)}
+                active={showORP}
+                title="Toggle ORP highlight (O)"
+              >
+                <Eye size={16} />
+              </IconButton>
+            </span>
           </div>
 
           {/* Scrubber */}
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0, words.length - 1)}
-            value={currentIndex}
-            onChange={(e) => {
-              setCurrentIndex(Number(e.target.value));
-              setIsPlaying(false);
-            }}
-            style={{
-              width: "100%",
-              height: 4,
-              appearance: "none",
-              background: `linear-gradient(to right, ${THEME.accent} ${progress}%, ${THEME.border} ${progress}%)`,
-              borderRadius: 2,
-              outline: "none",
-              cursor: "pointer",
-            }}
-          />
+          <div data-tutorial="scrubber">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, words.length - 1)}
+              value={currentIndex}
+              onChange={(e) => {
+                setCurrentIndex(Number(e.target.value));
+                setIsPlaying(false);
+              }}
+              style={{
+                width: "100%",
+                height: 4,
+                appearance: "none",
+                background: `linear-gradient(to right, ${THEME.accent} ${progress}%, ${THEME.border} ${progress}%)`,
+                borderRadius: 2,
+                outline: "none",
+                cursor: "pointer",
+              }}
+            />
+          </div>
 
           {/* Settings sliders */}
           <div
@@ -2182,29 +2654,33 @@ export default function SpeedReader() {
               flexWrap: "wrap",
             }}
           >
-            <Slider
-              label="Speed"
-              value={wpm}
-              onChange={setWpm}
-              min={100}
-              max={1000}
-              step={25}
-              displayValue={`${wpm} wpm`}
-            />
-            {currentFileRef.current && (
+            <div data-tutorial="wpm-slider">
               <Slider
-                label="Margins"
-                value={marginPercent}
-                onChange={(v) => {
-                  setMarginPercent(v);
-                  reExtract(spacingThreshold, v);
-                }}
-                min={0}
-                max={0.25}
-                step={0.01}
-                displayValue={`${Math.round(marginPercent * 100)}%`}
-                onLabelClick={() => setShowMarginPreview(true)}
+                label="Speed"
+                value={wpm}
+                onChange={setWpm}
+                min={100}
+                max={1000}
+                step={25}
+                displayValue={`${wpm} wpm`}
               />
+            </div>
+            {currentFileRef.current && (
+              <div data-tutorial="margins-slider">
+                <Slider
+                  label="Margins"
+                  value={marginPercent}
+                  onChange={(v) => {
+                    setMarginPercent(v);
+                    reExtract(spacingThreshold, v);
+                  }}
+                  min={0}
+                  max={0.25}
+                  step={0.01}
+                  displayValue={`${Math.round(marginPercent * 100)}%`}
+                  onLabelClick={() => setShowMarginPreview(true)}
+                />
+              </div>
             )}
           </div>
         </div>
