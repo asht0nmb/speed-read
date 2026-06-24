@@ -1,6 +1,6 @@
 # **speed**read
 
-Open-source speed reader using RSVP (Rapid Serial Visual Presentation). Upload a PDF, EPUB, or text file — paste text — or import any article from a URL. Words are displayed one at a time with the ORP (Optimal Recognition Point) letter pinned to the exact center of the screen so your eyes never move.
+Open-source speed reader using RSVP (Rapid Serial Visual Presentation). Upload a PDF, EPUB, or text file — paste text — or import any article from a URL. Words are displayed one at a time with the ORP (Optimal Recognition Point) letter pinned to the exact center of the screen, so your eyes never move.
 
 **[Try it live](https://speed-read-eight.vercel.app/)**
 
